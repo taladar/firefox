@@ -630,6 +630,9 @@ void nsWindow::Destroy() {
   mShell = nullptr;
   mContainer = nullptr;
 #ifdef MOZ_WAYLAND
+  if (mSurface) {
+    mSurface->SetOwningWindow(nullptr);
+  }
   mSurface = nullptr;
 #endif
 
@@ -1607,12 +1610,24 @@ auto nsWindow::Bounds::ComputeX11(const nsWindow* aWindow) -> Bounds {
 #ifdef MOZ_WAYLAND
 auto nsWindow::Bounds::ComputeWayland(const nsWindow* aWindow) -> Bounds {
   LOG_WIN(aWindow, "Bounds::ComputeWayland()");
+  // gdk_window_get_position/width/height return values in Gdk-logical pixels
+  // (physical / ceiled scale). Mozilla DesktopPixels are physical / fractional
+  // scale (see nsWindow::GetDesktopToDeviceScale). When the two scales differ
+  // (Wayland with fractional scaling, e.g. 1.5 with ceiled 2), we must scale
+  // the values to match. With integer scales the ratio is 1.0 and behavior is
+  // unchanged.
+  const double gdkToDesktop =
+      double(const_cast<nsWindow*>(aWindow)->GdkCeiledScaleFactor()) /
+      aWindow->FractionalScaleFactor();
   auto GetBounds = [&](GdkWindow* aWin) {
     GdkRectangle b{0};
     gdk_window_get_position(aWin, &b.x, &b.y);
     b.width = gdk_window_get_width(aWin);
     b.height = gdk_window_get_height(aWin);
-    return DesktopIntRect(b.x, b.y, b.width, b.height);
+    return DesktopIntRect(int(round(b.x * gdkToDesktop)),
+                          int(round(b.y * gdkToDesktop)),
+                          int(round(b.width * gdkToDesktop)),
+                          int(round(b.height * gdkToDesktop)));
   };
 
   const auto toplevelBounds = GetBounds(aWindow->GetToplevelGdkWindow());
@@ -2627,18 +2642,22 @@ void nsWindow::EmulateResizeDrag(GdkEventMotion* aEvent) {
   auto oldPoint = mLastResizePoint;
   mLastResizePoint = newPoint;
 
-  auto size = GetScreenBoundsUnscaled().Size();
-  size.width += newPoint.x - oldPoint.x;
-  size.height += newPoint.y - oldPoint.y;
+  // Work in Gdk-logical units throughout: event coordinates are Gdk-logical,
+  // and gtk_window_resize() expects Gdk-logical units.
+  auto desktopSize = GetScreenBoundsUnscaled().Size();
+  gint width = DesktopPixelsToGdkCoordRound(desktopSize.width) +
+               (newPoint.x - oldPoint.x);
+  gint height = DesktopPixelsToGdkCoordRound(desktopSize.height) +
+                (newPoint.y - oldPoint.y);
 
   if (mAspectResizer.value() == GTK_ORIENTATION_VERTICAL) {
-    size.width = int(size.height * mAspectRatio);
+    width = int(height * mAspectRatio);
   } else {  // GTK_ORIENTATION_HORIZONTAL
-    size.height = int(size.width / mAspectRatio);
+    height = int(width / mAspectRatio);
   }
-  LOG("  aspect ratio correction %d x %d aspect %.2f\n", size.width,
-      size.height, mAspectRatio);
-  gtk_window_resize(GTK_WINDOW(mShell), size.width, size.height);
+  LOG("  aspect ratio correction %d x %d aspect %.2f\n", width, height,
+      mAspectRatio);
+  gtk_window_resize(GTK_WINDOW(mShell), width, height);
 }
 
 void nsWindow::OnMotionNotifyEvent(GdkEventMotion* aEvent) {
@@ -4310,8 +4329,9 @@ nsresult nsWindow::Create(nsIWidget* aParent, const LayoutDeviceIntRect& aRect,
   if (AreBoundsSane()) {
     LOG("  nsWindow::Create() Initial resize to %d x %d\n", mClientArea.width,
         mClientArea.height);
-    gtk_window_resize(GTK_WINDOW(mShell), mClientArea.width,
-                      mClientArea.height);
+    gtk_window_resize(GTK_WINDOW(mShell),
+                      DesktopPixelsToGdkCoordRound(mClientArea.width),
+                      DesktopPixelsToGdkCoordRound(mClientArea.height));
   }
   if (mPiPType == PiPType::MediaPiP) {
     LOG("  Is Media PiP window\n");
@@ -4733,6 +4753,9 @@ void nsWindow::NativeMoveResize(bool aMoved, bool aResized) {
 
   // Window size is calculated without decorations, Gtk adds decorations
   // size to our request at gtk_window_resize().
+  // gtk_window_move/resize consume Gdk-logical units (physical / ceiled
+  // scale), while frameRect is in DesktopPixels (physical / fractional
+  // scale). Convert at the boundary.
   GdkRectangle moveResizeRect = [&] {
     auto cr = frameRect;
     // In CSD mode gtk_window_move() / gtk_window_resize() expects coordinates
@@ -4744,7 +4767,7 @@ void nsWindow::NativeMoveResize(bool aMoved, bool aResized) {
     if (!ToplevelUsesCSD()) {
       cr -= DesktopIntPoint(mClientMargin.left, mClientMargin.top);
     }
-    return GdkRectangle{cr.x, cr.y, cr.width, cr.height};
+    return DesktopPixelsToGdkRectRound(cr);
   }();
 
   LOG("nsWindow::NativeMoveResize mLastMoveRequest [%d,%d] mClientMargin "
@@ -6921,8 +6944,9 @@ void nsWindow::SetCustomTitlebar(bool aState) {
     g_object_set_data(G_OBJECT(GetToplevelGdkWindow()), "nsWindow", this);
 
     if (AreBoundsSane()) {
-      gtk_window_resize(GTK_WINDOW(mShell), mClientArea.width,
-                        mClientArea.height);
+      gtk_window_resize(GTK_WINDOW(mShell),
+                        DesktopPixelsToGdkCoordRound(mClientArea.width),
+                        DesktopPixelsToGdkCoordRound(mClientArea.height));
     }
 
     if (visible) {
@@ -6990,6 +7014,12 @@ double nsWindow::FractionalScaleFactor() const {
     }
   }
 #endif
+  // Look up the actual monitor this window is on rather than defaulting to
+  // monitor 0, which is wrong when monitors have mixed scale factors.
+  if (RefPtr<Screen> screen =
+          ScreenHelperGTK::GetScreenForWindow(const_cast<nsWindow*>(this))) {
+    return screen->GetContentsScaleFactor();
+  }
   return ScreenHelperGTK::GetGTKMonitorFractionalScaleFactor();
 }
 
@@ -7027,6 +7057,18 @@ GdkRectangle nsWindow::DevicePixelsToGdkRectRoundIn(
   int right = floor((aRect.x + aRect.width) / scale);
   int bottom = floor((aRect.y + aRect.height) / scale);
   return {x, y, std::max(right - x, 0), std::max(bottom - y, 0)};
+}
+
+gint nsWindow::DesktopPixelsToGdkCoordRound(int aPixels) {
+  const double ratio = FractionalScaleFactor() / GdkCeiledScaleFactor();
+  return int(round(aPixels * ratio));
+}
+
+GdkRectangle nsWindow::DesktopPixelsToGdkRectRound(
+    const DesktopIntRect& aRect) {
+  const double ratio = FractionalScaleFactor() / GdkCeiledScaleFactor();
+  return {int(round(aRect.x * ratio)), int(round(aRect.y * ratio)),
+          int(round(aRect.width * ratio)), int(round(aRect.height * ratio))};
 }
 
 LayoutDeviceIntPoint nsWindow::GdkEventCoordsToDevicePixels(gdouble aX,

@@ -623,8 +623,10 @@ bool nsWindowWayland::WaylandPopupCheckAndGetAnchor(GdkRectangle* aPopupAnchor,
     anchorRect.MoveBy(-parent);
   }
 
-  *aPopupAnchor = GdkRectangle{anchorRect.x, anchorRect.y, anchorRect.width,
-                               anchorRect.height};
+  // anchorRect is in DesktopPixels; gdk_window_move_to_rect expects Gdk-logical
+  // units. Convert at the boundary so the parent-bounds intersection check in
+  // WaylandPopupAnchorAdjustForParentPopup compares apples to apples.
+  *aPopupAnchor = DesktopPixelsToGdkRectRound(anchorRect);
   LOG("  anchored to rectangle [%d, %d] -> [%d x %d]", aPopupAnchor->x,
       aPopupAnchor->y, aPopupAnchor->width, aPopupAnchor->height);
 
@@ -749,8 +751,10 @@ void nsWindowWayland::WaylandPopupMoveImpl() {
   WaylandPopupPrepareForMove();
 
   if (!mPopupUseMoveToRect) {
+    // pos is in DesktopPixels; gtk_window_move expects Gdk-logical units.
     auto pos = mLastMoveRequest - WaylandGetParentPosition();
-    WaylandPopupMovePlain(pos.x, pos.y);
+    WaylandPopupMovePlain(DesktopPixelsToGdkCoordRound(pos.x),
+                          DesktopPixelsToGdkCoordRound(pos.y));
     // Layout already should be aware of our bounds, since we didn't change it
     // from the widget side for flipping or so.
     return;
@@ -1562,37 +1566,43 @@ void nsWindowWayland::NativeMoveResizeWaylandPopupCallback(
     return;
   }
 
-  const GdkRectangle finalGdkRect = [&] {
+  // aFinalSize is in Gdk-logical units (physical / ceiled scale). Convert to
+  // DesktopPixels (physical / fractional scale) so the comparison against
+  // mClientArea is in matching units.
+  const double gdkToDesktop =
+      double(GdkCeiledScaleFactor()) / FractionalScaleFactor();
+  const DesktopIntRect finalDesktopRect = [&] {
     GdkRectangle finalRect = *aFinalSize;
     DesktopIntPoint parent = WaylandGetParentPosition();
-    finalRect.x += parent.x;
-    finalRect.y += parent.y;
-    return finalRect;
+    return DesktopIntRect(
+        int(round(finalRect.x * gdkToDesktop)) + parent.x.value,
+        int(round(finalRect.y * gdkToDesktop)) + parent.y.value,
+        int(round(finalRect.width * gdkToDesktop)),
+        int(round(finalRect.height * gdkToDesktop)));
   }();
 
   // With fractional scaling, our devPx->Gdk->devPx conversion might not
-  // perfectly round-trip. Compare gdk rects to check whether size or positions
-  // have changed from what we'd request otherwise, in order to avoid
-  // flickering.
+  // perfectly round-trip. Use a per-Gdk-pixel tolerance to decide whether the
+  // compositor really moved/resized us versus a rounding artefact.
   const auto currentRect = mClientArea;
-  auto scale = GdkCeiledScaleFactor();
+  const gint tolerance =
+      std::max(1, int(round(double(GdkCeiledScaleFactor()) / gdkToDesktop)));
   auto IsSubstantiallyDifferent = [=](gint a, gint b) {
-    return std::abs(a - b) > scale;
+    return std::abs(a - b) > tolerance;
   };
 
   const bool needsPositionUpdate =
-      IsSubstantiallyDifferent(finalGdkRect.x, currentRect.x) ||
-      IsSubstantiallyDifferent(finalGdkRect.y, currentRect.y);
+      IsSubstantiallyDifferent(finalDesktopRect.x, currentRect.x) ||
+      IsSubstantiallyDifferent(finalDesktopRect.y, currentRect.y);
   const bool needsSizeUpdate =
-      IsSubstantiallyDifferent(finalGdkRect.width, currentRect.width) ||
-      IsSubstantiallyDifferent(finalGdkRect.height, currentRect.height);
-  const DesktopIntRect newClientArea = DesktopIntRect(
-      finalGdkRect.x, finalGdkRect.y, finalGdkRect.width, finalGdkRect.height);
+      IsSubstantiallyDifferent(finalDesktopRect.width, currentRect.width) ||
+      IsSubstantiallyDifferent(finalDesktopRect.height, currentRect.height);
+  const DesktopIntRect newClientArea = finalDesktopRect;
 
-  LOG("  orig gdk [%d, %d] -> [%d x %d]", currentRect.x, currentRect.y,
+  LOG("  orig desktop [%d, %d] -> [%d x %d]", currentRect.x, currentRect.y,
       currentRect.width, currentRect.height);
-  LOG("  new gdk [%d, %d] -> [%d x %d]\n", finalGdkRect.x, finalGdkRect.y,
-      finalGdkRect.width, finalGdkRect.height);
+  LOG("  new desktop [%d, %d] -> [%d x %d]\n", finalDesktopRect.x,
+      finalDesktopRect.y, finalDesktopRect.width, finalDesktopRect.height);
   LOG("  new mClientArea [%d, %d] -> [%d x %d]", newClientArea.x,
       newClientArea.y, newClientArea.width, newClientArea.height);
 
@@ -1643,13 +1653,18 @@ void nsWindowWayland::WaylandPopupSetDirectPosition() {
 
   mClientArea = newRect;
 
+  // gtk_window_move/resize and gtk_widget_set_size_request all consume
+  // Gdk-logical units (physical / ceiled scale); newRect is in DesktopPixels
+  // (physical / fractional scale). Convert at the boundary.
+  const GdkRectangle gdkRect = DesktopPixelsToGdkRectRound(newRect);
+
   if (mIsDragPopup) {
-    gtk_window_move(GTK_WINDOW(mShell), newRect.x, newRect.y);
-    gtk_window_resize(GTK_WINDOW(mShell), newRect.width, newRect.height);
+    gtk_window_move(GTK_WINDOW(mShell), gdkRect.x, gdkRect.y);
+    gtk_window_resize(GTK_WINDOW(mShell), gdkRect.width, gdkRect.height);
     // DND window is placed inside container so we need to make hard size
     // request to ensure parent container is resized too.
-    gtk_widget_set_size_request(GTK_WIDGET(mShell), newRect.width,
-                                newRect.height);
+    gtk_widget_set_size_request(GTK_WIDGET(mShell), gdkRect.width,
+                                gdkRect.height);
     return;
   }
 
@@ -1663,33 +1678,40 @@ void nsWindowWayland::WaylandPopupSetDirectPosition() {
     return;
   }
 
+  // Parent size and position come from Gdk in Gdk-logical units. Do the
+  // clamping math in Gdk-logical to match.
   int parentWidth = gdk_window_get_width(gdkWindow);
-  int popupWidth = newRect.width;
+  int popupWidth = gdkRect.width;
 
   int x;
   gdk_window_get_position(gdkWindow, &x, nullptr);
 
-  auto pos = newRect.TopLeft();
+  GdkPoint gdkPos{gdkRect.x, gdkRect.y};
   // If popup is bigger than main window just center it.
   if (popupWidth > parentWidth) {
-    pos.x = -(parentWidth - popupWidth) / 2 + x;
+    gdkPos.x = -(parentWidth - popupWidth) / 2 + x;
   } else {
-    if (pos.x < x) {
+    if (gdkPos.x < x) {
       // Stick with left window edge if it's placed too left
-      pos.x = x;
-    } else if (pos.x + popupWidth > parentWidth + x) {
+      gdkPos.x = x;
+    } else if (gdkPos.x + popupWidth > parentWidth + x) {
       // Stick with right window edge otherwise
-      pos.x = parentWidth + x - popupWidth;
+      gdkPos.x = parentWidth + x - popupWidth;
     }
   }
 
-  LOG("  set position [%d, %d]\n", pos.x.value, pos.y.value);
-  gtk_window_move(GTK_WINDOW(mShell), pos.x, pos.y);
+  LOG("  set position [%d, %d]\n", gdkPos.x, gdkPos.y);
+  gtk_window_move(GTK_WINDOW(mShell), gdkPos.x, gdkPos.y);
 
-  LOG("  set size [%d, %d]\n", newRect.width, newRect.height);
-  gtk_window_resize(GTK_WINDOW(mShell), newRect.width, newRect.height);
+  LOG("  set size [%d, %d]\n", gdkRect.width, gdkRect.height);
+  gtk_window_resize(GTK_WINDOW(mShell), gdkRect.width, gdkRect.height);
 
-  if (pos.x != newRect.x) {
+  if (gdkPos.x != gdkRect.x) {
+    // Translate the Gdk-clamped x back into DesktopPixels to update
+    // mClientArea / propagate to layout.
+    const double gdkToDesktop =
+        double(GdkCeiledScaleFactor()) / FractionalScaleFactor();
+    DesktopIntPoint pos(int(round(gdkPos.x * gdkToDesktop)), newRect.y);
     mClientArea.MoveTo(pos);
     WaylandPopupPropagateChangesToLayout(/* move */ true, /* resize */ false);
   }
@@ -1733,8 +1755,11 @@ bool nsWindowWayland::WaylandPopupFitsToplevelWindow() {
 }
 
 void nsWindowWayland::NativeMoveResizeWaylandPopup(bool aMove, bool aResize) {
-  GdkRectangle rect{mLastMoveRequest.x, mLastMoveRequest.y,
-                    mLastSizeRequest.width, mLastSizeRequest.height};
+  // mLastMoveRequest / mLastSizeRequest are in DesktopPixels (physical /
+  // fractional). gtk_window_resize takes Gdk-logical (physical / ceiled), so
+  // convert at the boundary.
+  const GdkRectangle rect = DesktopPixelsToGdkRectRound(
+      DesktopIntRect(mLastMoveRequest, mLastSizeRequest));
 
   LOG("nsWindowWayland::NativeMoveResizeWaylandPopup [%d,%d] -> [%d x %d] move "
       "%d "
