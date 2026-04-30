@@ -475,6 +475,14 @@ class nsWindow final : public nsIWidget {
   GdkRectangle DevicePixelsToGdkRectRoundOut(const LayoutDeviceIntRect&);
   GdkRectangle DevicePixelsToGdkRectRoundIn(const LayoutDeviceIntRect&);
 
+  // DesktopPixels are physical / FractionalScaleFactor(); Gdk-logical units
+  // are physical / GdkCeiledScaleFactor(). These helpers convert between the
+  // two for code paths feeding gtk_window_resize/move and gdk_window_move_to_*
+  // (which all expect Gdk-logical units). When the two scales agree (X11,
+  // integer scale, fractional pref disabled) the conversion is identity.
+  gint DesktopPixelsToGdkCoordRound(int);
+  GdkRectangle DesktopPixelsToGdkRectRound(const DesktopIntRect&);
+
   // From GDK
   LayoutDeviceIntPoint GdkPointToDevicePixels(const GdkPoint&);
   LayoutDeviceIntPoint GdkEventCoordsToDevicePixels(gdouble aX, gdouble aY);
@@ -662,7 +670,8 @@ class nsWindow final : public nsIWidget {
   // positioning, in LockAspect() to remember the intended aspect ratio, and
   // to remember a size requested while waiting for moved-to-rect when
   // OnSizeAllocate() might change mClientArea.Size().
-  // All these values are in unscaled (Gdk) coordinates.
+  // Values are in DesktopPixels (physical pixels divided by the fractional
+  // scale factor on Wayland; equal to ceiled-scale pixels on X11).
   DesktopIntSize mLastSizeRequest;
   // Same but for positioning. Used to track move requests.
   DesktopIntPoint mLastMoveRequest;

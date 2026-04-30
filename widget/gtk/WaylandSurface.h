@@ -19,6 +19,7 @@ struct wl_subsurface;
 struct wl_egl_window;
 
 class MessageLoop;
+class nsWindow;
 
 namespace mozilla::widget {
 
@@ -39,6 +40,12 @@ class WaylandSurface final {
   void* GetLoggingWidget() const { return mLoggingWidget; };
   void SetLoggingWidget(void* aWidget) { mLoggingWidget = aWidget; }
 #endif
+
+  // Owning nsWindow back-reference, used by GetScale() to find the actual
+  // monitor this surface is on. Cleared by nsWindow::DestroyChildWindows()
+  // before the surface is released so the pointer never dangles.
+  void SetOwningWindow(nsWindow* aWindow) { mOwningWindow = aWindow; }
+  nsWindow* GetOwningWindow() const { return mOwningWindow; }
 
   void FrameCallbackHandler(struct wl_callback* aCallback, uint32_t aTime,
                             bool aRoutedFromChildSurface);
@@ -311,6 +318,11 @@ class WaylandSurface final {
   // Weak ref to owning widget (nsWindow or NativeLayerWayland),
   // used for diagnostics/logging only.
   void* mLoggingWidget = nullptr;
+
+  // Weak ref to the owning nsWindow, when this surface belongs to one.
+  // Cleared on nsWindow teardown. Used by GetScale() to find the current
+  // monitor when no fractional-scale event has arrived yet.
+  nsWindow* mOwningWindow = nullptr;
 
   // mIsMapped means we're supposed to be visible
   // (or not if Wayland compositor decides so).
