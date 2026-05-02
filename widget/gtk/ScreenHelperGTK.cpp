@@ -611,12 +611,19 @@ RefPtr<Screen> ScreenHelperGTK::GetScreenForWindow(nsWindow* aWindow) {
   // On Wayland with mixed-scale outputs, gdk_display_get_monitor_at_window
   // is unreliable: it often returns monitor 0 for windows that haven't been
   // mapped yet or whose surface tracking lags behind. Mozilla's per-surface
-  // fractional scale (via wp_fractional_scale_v1, surfaced through
-  // FractionalScaleFactor()) is the authoritative scale for the window. If
-  // the GDK-suggested screen's contents scale disagrees with the window's
-  // and exactly one screen has the matching scale, prefer that one.
+  // fractional scale (via wp_fractional_scale_v1, exposed by
+  // SurfaceFractionalScaleIfKnown() — which deliberately doesn't fall back
+  // through us) is the authoritative scale for the window. If the
+  // GDK-suggested screen's contents scale disagrees with the window's and
+  // exactly one screen has the matching scale, prefer that one. We can only
+  // do this once the surface has actually received a preferred-scale event;
+  // before that, we accept GDK's answer rather than guess.
+  Maybe<double> surfaceScale;
   if (GdkIsWaylandDisplay()) {
-    const double windowScale = aWindow->FractionalScaleFactor();
+    surfaceScale = aWindow->SurfaceFractionalScaleIfKnown();
+  }
+  if (surfaceScale) {
+    const double windowScale = *surfaceScale;
     if (gdkScreen && std::abs(gdkScreen->GetContentsScaleFactor() -
                               windowScale) < 0.01) {
       LOG_SCREEN(
