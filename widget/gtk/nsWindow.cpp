@@ -6985,9 +6985,11 @@ gint nsWindow::GdkCeiledScaleFactor() {
 
   // We're missing scale for window (is hidden?), read parent scale
   if (nsWindow* topmost = nsWindow::FromWidget(GetTopLevelWidget())) {
-    LOGVERBOSE("nsWindow::GdkCeiledScaleFactor(): toplevel [%p] scale %d",
-               topmost, (int)topmost->mCeiledScaleFactor);
-    return topmost->mCeiledScaleFactor;
+    if (topmost->mCeiledScaleFactor != sNoScale) {
+      LOGVERBOSE("nsWindow::GdkCeiledScaleFactor(): toplevel [%p] scale %d",
+                 topmost, (int)topmost->mCeiledScaleFactor);
+      return topmost->mCeiledScaleFactor;
+    }
   }
 
   LOGVERBOSE("nsWindow::GdkCeiledScaleFactor(): monitor scale %d",
