@@ -7024,24 +7024,24 @@ double nsWindow::FractionalScaleFactor() const {
 }
 
 gint nsWindow::DevicePixelsToGdkCoordRound(int aPixels) {
-  double scale = FractionalScaleFactor();
+  double scale = GdkCeiledScaleFactor();
   return int(round(aPixels / scale));
 }
 
 gint nsWindow::DevicePixelsToGdkCoordRoundDown(int aPixels) {
-  double scale = FractionalScaleFactor();
+  double scale = GdkCeiledScaleFactor();
   return floor(aPixels / scale);
 }
 
 GdkPoint nsWindow::DevicePixelsToGdkPointRoundDown(
     const LayoutDeviceIntPoint& aPoint) {
-  double scale = FractionalScaleFactor();
+  double scale = GdkCeiledScaleFactor();
   return {int(aPoint.x / scale), int(aPoint.y / scale)};
 }
 
 GdkRectangle nsWindow::DevicePixelsToGdkRectRoundOut(
     const LayoutDeviceIntRect& aRect) {
-  double scale = FractionalScaleFactor();
+  double scale = GdkCeiledScaleFactor();
   int x = floor(aRect.x / scale);
   int y = floor(aRect.y / scale);
   int right = ceil((aRect.x + aRect.width) / scale);
@@ -7051,7 +7051,7 @@ GdkRectangle nsWindow::DevicePixelsToGdkRectRoundOut(
 
 GdkRectangle nsWindow::DevicePixelsToGdkRectRoundIn(
     const LayoutDeviceIntRect& aRect) {
-  double scale = FractionalScaleFactor();
+  double scale = GdkCeiledScaleFactor();
   int x = ceil(aRect.x / scale);
   int y = ceil(aRect.y / scale);
   int right = floor((aRect.x + aRect.width) / scale);
@@ -7073,12 +7073,12 @@ GdkRectangle nsWindow::DesktopPixelsToGdkRectRound(
 
 LayoutDeviceIntPoint nsWindow::GdkEventCoordsToDevicePixels(gdouble aX,
                                                             gdouble aY) {
-  double scale = FractionalScaleFactor();
+  double scale = GdkCeiledScaleFactor();
   return LayoutDeviceIntPoint::Floor((float)(aX * scale), (float)(aY * scale));
 }
 
 LayoutDeviceIntPoint nsWindow::GdkPointToDevicePixels(const GdkPoint& aPoint) {
-  double scale = FractionalScaleFactor();
+  double scale = GdkCeiledScaleFactor();
   return LayoutDeviceIntPoint::Floor((float)(aPoint.x * scale),
                                      (float)(aPoint.y * scale));
 }
