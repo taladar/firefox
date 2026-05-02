@@ -458,6 +458,12 @@ class nsWindow final : public nsIWidget {
   // HiDPI scale conversion
   gint GdkCeiledScaleFactor();
   double FractionalScaleFactor() const;
+  // Returns the surface's per-output fractional scale if the compositor has
+  // already delivered a wp_fractional_scale_v1.preferred_scale event for it,
+  // or Nothing() otherwise. Unlike FractionalScaleFactor() this never falls
+  // back through ScreenHelperGTK::GetScreenForWindow(), which makes it safe
+  // to call from there without recursing.
+  mozilla::Maybe<double> SurfaceFractionalScaleIfKnown() const;
 
   LayoutDeviceIntPoint ToLayoutDevicePixels(const DesktopIntPoint&);
   LayoutDeviceIntSize ToLayoutDevicePixels(const DesktopIntSize&);
