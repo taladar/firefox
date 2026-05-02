@@ -5099,6 +5099,10 @@ bool nsWindow::DoDrawTilebarCorners() {
 }
 
 GdkWindow* nsWindow::GetToplevelGdkWindow() const {
+  if (!mShell || !GTK_IS_WIDGET(mShell)) {
+    LOGVERBOSE("GetToplevelGdkWindow: invalid mShell %p", mShell);
+    return nullptr;
+  }
   return gtk_widget_get_window(mShell);
 }
 
@@ -7076,13 +7080,28 @@ GdkRectangle nsWindow::DesktopPixelsToGdkRectRound(
 LayoutDeviceIntPoint nsWindow::GdkEventCoordsToDevicePixels(gdouble aX,
                                                             gdouble aY) {
   double scale = FractionalScaleFactor();
-  return LayoutDeviceIntPoint::Floor((float)(aX * scale), (float)(aY * scale));
+  auto result =
+      LayoutDeviceIntPoint::Floor((float)(aX * scale), (float)(aY * scale));
+  LOGVERBOSE(
+      "GdkEventCoordsToDevicePixels: in (%g, %g) frac %.3f ceiled %d -> dev "
+      "(%d, %d), mClientArea (%d, %d) %d x %d",
+      aX, aY, scale, GdkCeiledScaleFactor(), result.x.value, result.y.value,
+      mClientArea.x.value, mClientArea.y.value, mClientArea.width,
+      mClientArea.height);
+  return result;
 }
 
 LayoutDeviceIntPoint nsWindow::GdkPointToDevicePixels(const GdkPoint& aPoint) {
   double scale = FractionalScaleFactor();
-  return LayoutDeviceIntPoint::Floor((float)(aPoint.x * scale),
-                                     (float)(aPoint.y * scale));
+  auto result = LayoutDeviceIntPoint::Floor((float)(aPoint.x * scale),
+                                            (float)(aPoint.y * scale));
+  LOGVERBOSE(
+      "GdkPointToDevicePixels: in (%d, %d) frac %.3f ceiled %d -> dev "
+      "(%d, %d), mClientArea (%d, %d) %d x %d",
+      aPoint.x, aPoint.y, scale, GdkCeiledScaleFactor(), result.x.value,
+      result.y.value, mClientArea.x.value, mClientArea.y.value,
+      mClientArea.width, mClientArea.height);
+  return result;
 }
 
 nsresult nsWindow::SynthesizeNativeMouseEvent(
