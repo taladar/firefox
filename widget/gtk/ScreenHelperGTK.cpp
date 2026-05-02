@@ -624,7 +624,8 @@ RefPtr<Screen> ScreenHelperGTK::GetScreenForWindow(nsWindow* aWindow) {
   }
   if (surfaceScale) {
     const double windowScale = *surfaceScale;
-    if (gdkScreen && std::abs(gdkScreen->GetContentsScaleFactor() -
+    if (gdkScreen && std::abs(double(gdkScreen->GetContentsScaleFactor()
+                                         .scale) -
                               windowScale) < 0.01) {
       LOG_SCREEN(
           "GetScreenForWindow() [%p] [%d] gdk screen %s (scale %.3f matches "
@@ -644,7 +645,8 @@ RefPtr<Screen> ScreenHelperGTK::GetScreenForWindow(nsWindow* aWindow) {
     bool ambiguousSize = false;
     int scaleMatches = 0;
     for (const auto& s : screens) {
-      if (std::abs(s->GetContentsScaleFactor() - windowScale) >= 0.01) {
+      if (std::abs(double(s->GetContentsScaleFactor().scale) - windowScale) >=
+          0.01) {
         continue;
       }
       ++scaleMatches;
