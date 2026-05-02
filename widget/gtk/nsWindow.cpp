@@ -2054,17 +2054,20 @@ void nsWindow::NativeMoveResizeWaylandPopupCallback(
     return;
   }
 
-  // aFinalSize is in Gdk-logical units (physical / ceiled scale). Convert to
-  // DesktopPixels (physical / fractional scale) so the comparison against
-  // mClientArea is in matching units.
+  // aFinalSize comes from xdg_popup.configure. The position is relayed
+  // verbatim from the compositor in surface-local logical coords (=
+  // DesktopPixels here). The width/height GDK derives from its own scale
+  // bookkeeping and reports in Gdk-logical units (physical / ceiled),
+  // so those need a Gdk -> Desktop ratio applied. With integer scales the
+  // ratio is 1.0 and behavior is unchanged.
   const double gdkToDesktop =
       double(GdkCeiledScaleFactor()) / FractionalScaleFactor();
   const DesktopIntRect finalDesktopRect = [&] {
     GdkRectangle finalRect = *aFinalSize;
     DesktopIntPoint parent = WaylandGetParentPosition();
     return DesktopIntRect(
-        int(round(finalRect.x * gdkToDesktop)) + parent.x.value,
-        int(round(finalRect.y * gdkToDesktop)) + parent.y.value,
+        finalRect.x + parent.x.value,
+        finalRect.y + parent.y.value,
         int(round(finalRect.width * gdkToDesktop)),
         int(round(finalRect.height * gdkToDesktop)));
   }();
@@ -2598,8 +2601,16 @@ bool nsWindow::WaylandPopupAnchorAdjustForParentPopup(
     return false;
   }
 
-  GdkRectangle parentWindowRect = {0, 0, gdk_window_get_width(window),
-                                   gdk_window_get_height(window)};
+  // gdk_window_get_width/height return Gdk-logical (physical / ceiled). The
+  // anchor we're about to intersect with is in DesktopPixels (physical /
+  // fractional, matching the units the compositor uses for xdg_popup
+  // positioning). Convert at the boundary.
+  const double gdkToDesktop =
+      double(GdkCeiledScaleFactor()) / FractionalScaleFactor();
+  GdkRectangle parentWindowRect = {
+      0, 0,
+      int(round(gdk_window_get_width(window) * gdkToDesktop)),
+      int(round(gdk_window_get_height(window) * gdkToDesktop))};
   LOG("  parent window size %d x %d", parentWindowRect.width,
       parentWindowRect.height);
 
@@ -2656,10 +2667,12 @@ bool nsWindow::WaylandPopupCheckAndGetAnchor(GdkRectangle* aPopupAnchor,
     anchorRect.MoveBy(-parent);
   }
 
-  // anchorRect is in DesktopPixels; gdk_window_move_to_rect expects Gdk-logical
-  // units. Convert at the boundary so the parent-bounds intersection check in
-  // WaylandPopupAnchorAdjustForParentPopup compares apples to apples.
-  *aPopupAnchor = DesktopPixelsToGdkRectRound(anchorRect);
+  // anchorRect is in DesktopPixels. gdk_window_move_to_rect's anchor goes to
+  // the compositor as xdg_positioner.set_anchor_rect, whose coordinates are
+  // surface-local logical pixels — i.e. compositor-logical, which equals
+  // DesktopPixels here. Pass through unchanged.
+  *aPopupAnchor = GdkRectangle{anchorRect.x, anchorRect.y, anchorRect.width,
+                               anchorRect.height};
   LOG("  anchored to rectangle [%d, %d] -> [%d x %d]", aPopupAnchor->x,
       aPopupAnchor->y, aPopupAnchor->width, aPopupAnchor->height);
 
