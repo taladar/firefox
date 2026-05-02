@@ -7001,36 +7001,23 @@ gint nsWindow::GdkCeiledScaleFactor() {
   return ScreenHelperGTK::GetGTKMonitorScaleFactor();
 }
 
-mozilla::Maybe<double> nsWindow::SurfaceFractionalScaleIfKnown() const {
-#ifdef MOZ_WAYLAND
-  if (mSurface) {
-    // Use GetPreferredScaleOrNoScale() rather than GetScale(): the latter
-    // falls back through ScreenHelperGTK::GetScreenForWindow() when no
-    // preferred-scale event has arrived, which would re-enter us if this
-    // helper is being called from GetScreenForWindow itself.
-    double scale = mSurface->GetPreferredScaleOrNoScale();
-    if (scale != sNoScale) {
-      return mozilla::Some(scale);
-    }
-  }
-#endif
-  return mozilla::Nothing();
-}
-
 double nsWindow::FractionalScaleFactor() const {
 #ifdef MOZ_WAYLAND
-  if (auto scale = SurfaceFractionalScaleIfKnown()) {
+  if (mSurface) {
+    auto scale = mSurface->GetScale();
+    if (scale != sNoScale) {
 #  ifdef MOZ_LOGGING
-    if (LOG_ENABLED_VERBOSE()) {
-      static float lastScaleLog = 0.0;
-      if (lastScaleLog != *scale) {
-        lastScaleLog = *scale;
-        LOGVERBOSE("nsWindow::FractionalScaleFactor(): fractional scale %.2f",
-                   *scale);
+      if (LOG_ENABLED_VERBOSE()) {
+        static float lastScaleLog = 0.0;
+        if (lastScaleLog != scale) {
+          lastScaleLog = scale;
+          LOGVERBOSE("nsWindow::FractionalScaleFactor(): fractional scale %.2f",
+                     scale);
+        }
       }
-    }
 #  endif
-    return *scale;
+      return scale;
+    }
   }
 #endif
   // Look up the actual monitor this window is on rather than defaulting to
