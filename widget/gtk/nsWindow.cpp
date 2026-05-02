@@ -9124,7 +9124,11 @@ gint nsWindow::GdkCeiledScaleFactor() {
 mozilla::Maybe<double> nsWindow::SurfaceFractionalScaleIfKnown() const {
 #ifdef MOZ_WAYLAND
   if (mSurface) {
-    double scale = mSurface->GetScale();
+    // Use GetPreferredScaleOrNoScale() rather than GetScale(): the latter
+    // falls back through ScreenHelperGTK::GetScreenForWindow() when no
+    // preferred-scale event has arrived, which would re-enter us if this
+    // helper is being called from GetScreenForWindow itself.
+    double scale = mSurface->GetPreferredScaleOrNoScale();
     if (scale != sNoScale) {
       return mozilla::Some(scale);
     }

@@ -211,6 +211,11 @@ class WaylandSurface final {
   // return fractional scale of parent surface or monitor.
   static constexpr const double sNoScale = -1;
   double GetScale() const;
+  // Returns the raw value of mScreenScale (sNoScale if no
+  // wp_fractional_scale_v1.preferred_scale event has been received yet).
+  // Unlike GetScale(), this never falls back through
+  // ScreenHelperGTK::GetScreenForWindow(), so it's safe to call from there.
+  double GetPreferredScaleOrNoScale() const { return mScreenScale; }
 
   // Called when screen ceiled scale changed or set initial scale before we map
   // and paint the surface.
