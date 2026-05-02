@@ -9206,8 +9206,7 @@ LayoutDeviceIntPoint nsWindow::GdkEventCoordsToDevicePixels(gdouble aX,
       "GdkEventCoordsToDevicePixels: in (%g, %g) frac %.3f ceiled %d -> dev "
       "(%d, %d), mClientArea (%d, %d) %d x %d",
       aX, aY, scale, GdkCeiledScaleFactor(), result.x.value, result.y.value,
-      mClientArea.x.value, mClientArea.y.value, mClientArea.width,
-      mClientArea.height);
+      mClientArea.x, mClientArea.y, mClientArea.width, mClientArea.height);
   return result;
 }
 
@@ -9219,8 +9218,8 @@ LayoutDeviceIntPoint nsWindow::GdkPointToDevicePixels(const GdkPoint& aPoint) {
       "GdkPointToDevicePixels: in (%d, %d) frac %.3f ceiled %d -> dev "
       "(%d, %d), mClientArea (%d, %d) %d x %d",
       aPoint.x, aPoint.y, scale, GdkCeiledScaleFactor(), result.x.value,
-      result.y.value, mClientArea.x.value, mClientArea.y.value,
-      mClientArea.width, mClientArea.height);
+      result.y.value, mClientArea.x, mClientArea.y, mClientArea.width,
+      mClientArea.height);
   return result;
 }
 
