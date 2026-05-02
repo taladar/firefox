@@ -7001,23 +7001,32 @@ gint nsWindow::GdkCeiledScaleFactor() {
   return ScreenHelperGTK::GetGTKMonitorScaleFactor();
 }
 
-double nsWindow::FractionalScaleFactor() const {
+mozilla::Maybe<double> nsWindow::SurfaceFractionalScaleIfKnown() const {
 #ifdef MOZ_WAYLAND
   if (mSurface) {
-    auto scale = mSurface->GetScale();
+    double scale = mSurface->GetScale();
     if (scale != sNoScale) {
-#  ifdef MOZ_LOGGING
-      if (LOG_ENABLED_VERBOSE()) {
-        static float lastScaleLog = 0.0;
-        if (lastScaleLog != scale) {
-          lastScaleLog = scale;
-          LOGVERBOSE("nsWindow::FractionalScaleFactor(): fractional scale %.2f",
-                     scale);
-        }
-      }
-#  endif
-      return scale;
+      return mozilla::Some(scale);
     }
+  }
+#endif
+  return mozilla::Nothing();
+}
+
+double nsWindow::FractionalScaleFactor() const {
+#ifdef MOZ_WAYLAND
+  if (auto scale = SurfaceFractionalScaleIfKnown()) {
+#  ifdef MOZ_LOGGING
+    if (LOG_ENABLED_VERBOSE()) {
+      static float lastScaleLog = 0.0;
+      if (lastScaleLog != *scale) {
+        lastScaleLog = *scale;
+        LOGVERBOSE("nsWindow::FractionalScaleFactor(): fractional scale %.2f",
+                   *scale);
+      }
+    }
+#  endif
+    return *scale;
   }
 #endif
   // Look up the actual monitor this window is on rather than defaulting to
