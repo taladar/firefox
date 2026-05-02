@@ -624,9 +624,12 @@ RefPtr<Screen> ScreenHelperGTK::GetScreenForWindow(nsWindow* aWindow) {
   }
   if (surfaceScale) {
     const double windowScale = *surfaceScale;
-    if (gdkScreen && std::abs(double(gdkScreen->GetContentsScaleFactor()
-                                         .scale) -
-                              windowScale) < 0.01) {
+    auto scaleMatches = [windowScale](const Screen& aScreen) {
+      // ScaleFactor's underlying float promotes to double in the subtraction.
+      return std::abs(aScreen.GetContentsScaleFactor().scale - windowScale) <
+             0.01;
+    };
+    if (gdkScreen && scaleMatches(*gdkScreen)) {
       LOG_SCREEN(
           "GetScreenForWindow() [%p] [%d] gdk screen %s (scale %.3f matches "
           "window)",
@@ -643,13 +646,12 @@ RefPtr<Screen> ScreenHelperGTK::GetScreenForWindow(nsWindow* aWindow) {
     auto& screens = ScreenManager::GetSingleton().CurrentScreenList();
     RefPtr<Screen> scaleMatch;
     bool ambiguousSize = false;
-    int scaleMatches = 0;
+    int matchCount = 0;
     for (const auto& s : screens) {
-      if (std::abs(double(s->GetContentsScaleFactor().scale) - windowScale) >=
-          0.01) {
+      if (!scaleMatches(*s)) {
         continue;
       }
-      ++scaleMatches;
+      ++matchCount;
       if (!scaleMatch) {
         scaleMatch = s;
       } else if (s->GetRect().Size() != scaleMatch->GetRect().Size()) {
@@ -661,14 +663,14 @@ RefPtr<Screen> ScreenHelperGTK::GetScreenForWindow(nsWindow* aWindow) {
           "GetScreenForWindow() [%p] scale-matched screen %s (window scale "
           "%.3f; %d match%s; gdk suggested %s)",
           aWindow, ToString(scaleMatch->GetRect()).c_str(), windowScale,
-          scaleMatches, scaleMatches == 1 ? "" : "es",
+          matchCount, matchCount == 1 ? "" : "es",
           gdkScreen ? ToString(gdkScreen->GetRect()).c_str() : "nothing");
       return scaleMatch.forget();
     }
     LOG_SCREEN(
         "GetScreenForWindow() [%p] %d screens match scale %.3f with "
         "differing sizes, deferring to gdk",
-        aWindow, scaleMatches, windowScale);
+        aWindow, matchCount, windowScale);
   }
 #endif
 
