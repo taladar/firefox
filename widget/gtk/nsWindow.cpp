@@ -9165,6 +9165,33 @@ double nsWindow::FractionalScaleFactor() const {
 #  endif
     return *scale;
   }
+  // Popup windows have their own GdkWindow; before they're mapped and the
+  // wp_fractional_scale_v1 preferred_scale event has arrived, neither
+  // SurfaceFractionalScaleIfKnown nor gdk_display_get_monitor_at_window can
+  // tell us the right scale. Trusting GDK in that gap returns whichever
+  // monitor it defaults to (often a 1.0 monitor), causing ToDesktopPixels in
+  // WaylandPopupCheckAndGetAnchor to be a no-op and the anchor to land at
+  // physical-pixel coordinates that the compositor reads as compositor-
+  // logical, producing a fractional-factor offset.
+  //
+  // Defer to the transient-for parent's scale instead. The parent is either
+  // a toplevel (whose own surface scale is known after first map) or another
+  // popup whose chain eventually resolves at a toplevel. This mirrors what
+  // GdkCeiledScaleFactor() already does (it walks up via
+  // GetToplevelGdkWindow), keeping fractional and ceiled in sync.
+  if (GdkIsWaylandDisplay() && mShell) {
+    GtkWindow* parentGtkWindow =
+        gtk_window_get_transient_for(GTK_WINDOW(mShell));
+    if (parentGtkWindow && GTK_IS_WIDGET(parentGtkWindow) &&
+        GTK_WIDGET(parentGtkWindow) != mShell) {
+      if (nsWindow* parent =
+              get_window_for_gtk_widget(GTK_WIDGET(parentGtkWindow))) {
+        if (parent != this) {
+          return parent->FractionalScaleFactor();
+        }
+      }
+    }
+  }
 #endif
   // Look up the actual monitor this window is on rather than defaulting to
   // monitor 0, which is wrong when monitors have mixed scale factors.
