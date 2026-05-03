@@ -16,9 +16,7 @@
 #include "SandboxLogging.h"
 
 #include <dirent.h>
-#ifdef NIGHTLY_BUILD
-#  include "dlfcn.h"
-#endif
+#include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/futex.h>
@@ -772,7 +770,7 @@ void SetMediaPluginSandbox(const char* aFilePath) {
   files->Add("/proc/stat", SandboxOpenedFile::Error{});
   files->Add("/proc/net/unix", SandboxOpenedFile::Error{});
   files->Add("/proc/self/maps", SandboxOpenedFile::Error{});
-
+  (void)dlopen("libgcc_s.so.1", RTLD_GLOBAL|RTLD_LAZY);
   // Finally, start the sandbox.
   SetCurrentProcessSandbox(GetMediaSandboxPolicy(files));
 }
