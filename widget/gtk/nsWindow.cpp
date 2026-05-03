@@ -6383,11 +6383,14 @@ nsresult nsWindow::Create(nsIWidget* aParent, const LayoutDeviceIntRect& aRect,
     mSurface = new WaylandSurface(
         parentnsWindow ? MOZ_WL_SURFACE(parentnsWindow->GetMozContainer())
                        : nullptr);
-    LOG("  nsWindow::Create() WaylandSurface[%p] created (parent surface "
-        "%p)",
-        mSurface.get(),
-        parentnsWindow ? MOZ_WL_SURFACE(parentnsWindow->GetMozContainer())
-                       : nullptr);
+    {
+      RefPtr<mozilla::widget::WaylandSurface> parentSurfacePtr =
+          parentnsWindow ? MOZ_WL_SURFACE(parentnsWindow->GetMozContainer())
+                         : nullptr;
+      LOG("  nsWindow::Create() WaylandSurface[%p] created (parent surface "
+          "%p)",
+          mSurface.get(), parentSurfacePtr.get());
+    }
   }
   container = moz_container_new(this, mSurface);
 #else
