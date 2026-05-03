@@ -622,9 +622,33 @@ RefPtr<Screen> ScreenHelperGTK::GetScreenForWindow(nsWindow* aWindow) {
   if (GdkIsWaylandDisplay()) {
     surfaceScale = aWindow->SurfaceFractionalScaleIfKnown();
   }
+  // A screen with a zero-sized rect is a transient state niri (and other
+  // wlroots-based compositors) report when an output has been powered off:
+  // the slot stays in the monitor list with size 0x0 and scale 1.0 until the
+  // output comes back. Returning that screen lets nsMenuPopupFrame's
+  // "Wayland constraint <to screen>" code clamp popups to 0x0; the bad size
+  // then leaks into mMoveToRectPopupSize and stays cached even after the
+  // screen is restored, so every subsequent popup on the affected toplevel
+  // collapses to 1x1 and disappears. Treat such screens as non-existent for
+  // window-screen lookup purposes.
+  auto isUsableScreen = [](const Screen& aScreen) {
+    return !aScreen.GetRect().IsEmpty();
+  };
+  if (gdkScreen && !isUsableScreen(*gdkScreen)) {
+    LOG_SCREEN(
+        "GetScreenForWindow() [%p] gdk-suggested screen [%d] has empty rect "
+        "%s; ignoring it",
+        aWindow, gdkIndex, ToString(gdkScreen->GetRect()).c_str());
+    gdkScreen = nullptr;
+    gdkIndex = -1;
+  }
+
   if (surfaceScale) {
     const double windowScale = *surfaceScale;
-    auto scaleMatches = [windowScale](const Screen& aScreen) {
+    auto scaleMatches = [windowScale, &isUsableScreen](const Screen& aScreen) {
+      if (!isUsableScreen(aScreen)) {
+        return false;
+      }
       // ScaleFactor's underlying float promotes to double in the subtraction.
       return std::abs(aScreen.GetContentsScaleFactor().scale - windowScale) <
              0.01;
@@ -680,7 +704,10 @@ RefPtr<Screen> ScreenHelperGTK::GetScreenForWindow(nsWindow* aWindow) {
     return gdkScreen.forget();
   }
 
-  LOG_SCREEN("  Couldn't find monitor %p", monitor);
+  LOG_SCREEN(
+      "GetScreenForWindow() [%p] no usable screen for monitor %p; "
+      "returning nullptr so caller falls back",
+      aWindow, monitor);
   return nullptr;
 }
 
