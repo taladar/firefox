@@ -1610,24 +1610,20 @@ auto nsWindow::Bounds::ComputeX11(const nsWindow* aWindow) -> Bounds {
 #ifdef MOZ_WAYLAND
 auto nsWindow::Bounds::ComputeWayland(const nsWindow* aWindow) -> Bounds {
   LOG_WIN(aWindow, "Bounds::ComputeWayland()");
-  // gdk_window_get_position/width/height return values in Gdk-logical pixels
-  // (physical / ceiled scale). Mozilla DesktopPixels are physical / fractional
-  // scale (see nsWindow::GetDesktopToDeviceScale). When the two scales differ
-  // (Wayland with fractional scaling, e.g. 1.5 with ceiled 2), we must scale
-  // the values to match. With integer scales the ratio is 1.0 and behavior is
-  // unchanged.
-  const double gdkToDesktop =
-      double(const_cast<nsWindow*>(aWindow)->GdkCeiledScaleFactor()) /
-      aWindow->FractionalScaleFactor();
+  // Empirically on niri with wp_fractional_scale_v1, gdk_window_get_position/
+  // width/height return values in compositor-logical units, which equals
+  // Mozilla DesktopPixels (physical / fractional). The earlier assumption
+  // that they came in Gdk-logical (physical / ceiled) was wrong on this
+  // setup: scaling by ceiled/fractional inflated mClientArea by 4/3 and the
+  // system settled into a self-consistent bad state where the surface was
+  // sized correctly but layout thought the window was 4/3 wider than it
+  // actually was.
   auto GetBounds = [&](GdkWindow* aWin) {
     GdkRectangle b{0};
     gdk_window_get_position(aWin, &b.x, &b.y);
     b.width = gdk_window_get_width(aWin);
     b.height = gdk_window_get_height(aWin);
-    return DesktopIntRect(int(round(b.x * gdkToDesktop)),
-                          int(round(b.y * gdkToDesktop)),
-                          int(round(b.width * gdkToDesktop)),
-                          int(round(b.height * gdkToDesktop)));
+    return DesktopIntRect(b.x, b.y, b.width, b.height);
   };
 
   const auto toplevelBounds = GetBounds(aWindow->GetToplevelGdkWindow());
@@ -7079,15 +7075,16 @@ GdkRectangle nsWindow::DevicePixelsToGdkRectRoundIn(
 }
 
 gint nsWindow::DesktopPixelsToGdkCoordRound(int aPixels) {
-  const double ratio = FractionalScaleFactor() / GdkCeiledScaleFactor();
-  return int(round(aPixels * ratio));
+  // Identity: on Wayland with wp_fractional_scale_v1, gtk_window_resize/
+  // gtk_window_move/gdk_window_move_to_rect all consume compositor-logical
+  // units = DesktopPixels here. The wrapper is kept (rather than removed at
+  // call sites) so the change is small and easy to revert.
+  return aPixels;
 }
 
 GdkRectangle nsWindow::DesktopPixelsToGdkRectRound(
     const DesktopIntRect& aRect) {
-  const double ratio = FractionalScaleFactor() / GdkCeiledScaleFactor();
-  return {int(round(aRect.x * ratio)), int(round(aRect.y * ratio)),
-          int(round(aRect.width * ratio)), int(round(aRect.height * ratio))};
+  return {aRect.x, aRect.y, aRect.width, aRect.height};
 }
 
 LayoutDeviceIntPoint nsWindow::GdkEventCoordsToDevicePixels(gdouble aX,

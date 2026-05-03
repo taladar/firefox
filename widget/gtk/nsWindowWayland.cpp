@@ -565,16 +565,11 @@ bool nsWindowWayland::WaylandPopupAnchorAdjustForParentPopup(
     return false;
   }
 
-  // gdk_window_get_width/height return Gdk-logical (physical / ceiled). The
-  // anchor we're about to intersect with is in DesktopPixels (physical /
-  // fractional, matching the units the compositor uses for xdg_popup
-  // positioning). Convert at the boundary.
-  const double gdkToDesktop =
-      double(GdkCeiledScaleFactor()) / FractionalScaleFactor();
-  GdkRectangle parentWindowRect = {
-      0, 0,
-      int(round(gdk_window_get_width(window) * gdkToDesktop)),
-      int(round(gdk_window_get_height(window) * gdkToDesktop))};
+  // gdk_window_get_width/height return DesktopPixels (compositor-logical) on
+  // Wayland with wp_fractional_scale_v1; same units as the anchor we're about
+  // to intersect with.
+  GdkRectangle parentWindowRect = {0, 0, gdk_window_get_width(window),
+                                   gdk_window_get_height(window)};
   LOG("  parent window size %d x %d", parentWindowRect.width,
       parentWindowRect.height);
 
@@ -1576,32 +1571,26 @@ void nsWindowWayland::NativeMoveResizeWaylandPopupCallback(
     return;
   }
 
-  // aFinalSize comes from xdg_popup.configure. The position is relayed
-  // verbatim from the compositor in surface-local logical coords (=
-  // DesktopPixels here). The width/height GDK derives from its own scale
-  // bookkeeping and reports in Gdk-logical units (physical / ceiled),
-  // so those need a Gdk -> Desktop ratio applied. With integer scales the
-  // ratio is 1.0 and behavior is unchanged.
-  const double gdkToDesktop =
-      double(GdkCeiledScaleFactor()) / FractionalScaleFactor();
+  // aFinalSize from xdg_popup.configure is in compositor-logical units =
+  // DesktopPixels here, both for position and size. (The earlier hypothesis
+  // that the size half came in Gdk-logical via GDK's buffer-scale bookkeeping
+  // was wrong on this setup; scaling it by ceiled/fractional inflated the
+  // popup callback rect by 4/3.)
   const DesktopIntRect finalDesktopRect = [&] {
     GdkRectangle finalRect = *aFinalSize;
     DesktopIntPoint parent = WaylandGetParentPosition();
-    return DesktopIntRect(
-        finalRect.x + parent.x.value,
-        finalRect.y + parent.y.value,
-        int(round(finalRect.width * gdkToDesktop)),
-        int(round(finalRect.height * gdkToDesktop)));
+    return DesktopIntRect(finalRect.x + parent.x.value,
+                          finalRect.y + parent.y.value, finalRect.width,
+                          finalRect.height);
   }();
 
   // With fractional scaling, our devPx->Gdk->devPx conversion might not
   // perfectly round-trip. Use a per-Gdk-pixel tolerance to decide whether the
   // compositor really moved/resized us versus a rounding artefact.
   const auto currentRect = mClientArea;
-  const gint tolerance =
-      std::max(1, int(round(double(GdkCeiledScaleFactor()) / gdkToDesktop)));
+  auto scale = GdkCeiledScaleFactor();
   auto IsSubstantiallyDifferent = [=](gint a, gint b) {
-    return std::abs(a - b) > tolerance;
+    return std::abs(a - b) > scale;
   };
 
   const bool needsPositionUpdate =
@@ -1720,11 +1709,9 @@ void nsWindowWayland::WaylandPopupSetDirectPosition() {
   gtk_window_resize(GTK_WINDOW(mShell), gdkRect.width, gdkRect.height);
 
   if (gdkPos.x != gdkRect.x) {
-    // Translate the Gdk-clamped x back into DesktopPixels to update
-    // mClientArea / propagate to layout.
-    const double gdkToDesktop =
-        double(GdkCeiledScaleFactor()) / FractionalScaleFactor();
-    DesktopIntPoint pos(int(round(gdkPos.x * gdkToDesktop)), newRect.y);
+    // gdkPos and gdkRect are in DesktopPixels (DesktopPixelsToGdkRectRound is
+    // identity), so the clamped x updates mClientArea directly.
+    DesktopIntPoint pos(gdkPos.x, newRect.y);
     mClientArea.MoveTo(pos);
     WaylandPopupPropagateChangesToLayout(/* move */ true, /* resize */ false);
   }
