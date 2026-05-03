@@ -2059,9 +2059,15 @@ void nsWindow::NativeMoveResizeWaylandPopupCallback(
   // that the size half came in Gdk-logical via GDK's buffer-scale bookkeeping
   // was wrong on this setup; scaling it by ceiled/fractional inflated the
   // popup callback rect by 4/3.)
+  LOG("  raw aFinalSize (DesktopPixels) [%d, %d] -> [%d x %d] flippedX=%d "
+      "flippedY=%d ceiled %d frac %.3f",
+      aFinalSize->x, aFinalSize->y, aFinalSize->width, aFinalSize->height,
+      aFlippedX, aFlippedY, GdkCeiledScaleFactor(), FractionalScaleFactor());
   const DesktopIntRect finalDesktopRect = [&] {
     GdkRectangle finalRect = *aFinalSize;
     DesktopIntPoint parent = WaylandGetParentPosition();
+    LOG("  WaylandGetParentPosition (DesktopPixels) %d, %d", parent.x.value,
+        parent.y.value);
     return DesktopIntRect(finalRect.x + parent.x.value,
                           finalRect.y + parent.y.value, finalRect.width,
                           finalRect.height);
@@ -2191,13 +2197,18 @@ void nsWindow::WaylandPopupSetDirectPosition() {
     return;
   }
 
-  // Parent size and position come from Gdk in Gdk-logical units. Do the
-  // clamping math in Gdk-logical to match.
+  // Parent size and position come from Gdk; on Wayland with
+  // wp_fractional_scale_v1 they are in DesktopPixels, which matches gdkRect
+  // (DesktopPixelsToGdkRectRound is identity).
   int parentWidth = gdk_window_get_width(gdkWindow);
   int popupWidth = gdkRect.width;
 
   int x;
   gdk_window_get_position(gdkWindow, &x, nullptr);
+  LOG("  raw gdk parent %p (DesktopPixels) pos x %d size %d, popup gdkRect [%d, "
+      "%d] -> [%d x %d]",
+      gdkWindow, x, parentWidth, gdkRect.x, gdkRect.y, gdkRect.width,
+      gdkRect.height);
 
   GdkPoint gdkPos{gdkRect.x, gdkRect.y};
   // If popup is bigger than main window just center it.
@@ -2596,10 +2607,17 @@ bool nsWindow::WaylandPopupAnchorAdjustForParentPopup(
   // gdk_window_get_width/height return DesktopPixels (compositor-logical) on
   // Wayland with wp_fractional_scale_v1; same units as the anchor we're about
   // to intersect with.
-  GdkRectangle parentWindowRect = {0, 0, gdk_window_get_width(window),
-                                   gdk_window_get_height(window)};
+  const gint rawParentW = gdk_window_get_width(window);
+  const gint rawParentH = gdk_window_get_height(window);
+  LOG("  raw gdk parent %p (DesktopPixels) %d x %d ceiled %d frac %.3f",
+      window, rawParentW, rawParentH, GdkCeiledScaleFactor(),
+      FractionalScaleFactor());
+  GdkRectangle parentWindowRect = {0, 0, rawParentW, rawParentH};
   LOG("  parent window size %d x %d", parentWindowRect.width,
       parentWindowRect.height);
+  LOG("  incoming aPopupAnchor (DesktopPixels) [%d, %d] -> [%d x %d]",
+      aPopupAnchor->x, aPopupAnchor->y, aPopupAnchor->width,
+      aPopupAnchor->height);
 
   // We can't have rectangle anchor with zero width/height.
   if (!aPopupAnchor->width) {
@@ -2645,8 +2663,15 @@ bool nsWindow::WaylandPopupCheckAndGetAnchor(GdkRectangle* aPopupAnchor,
   // Update popup layout coordinates from layout by recent popup hierarchy
   // (calculate correct position according to parent window)
   // and convert to Gtk coordinates.
+  LOG("  layout mAnchorRect (DevicePixels) [%d, %d] -> [%d x %d]",
+      mPopupMoveToRectParams.mAnchorRect.x,
+      mPopupMoveToRectParams.mAnchorRect.y,
+      mPopupMoveToRectParams.mAnchorRect.width,
+      mPopupMoveToRectParams.mAnchorRect.height);
   DesktopIntRect anchorRect =
       ToDesktopPixels(mPopupMoveToRectParams.mAnchorRect);
+  LOG("  anchorRect (DesktopPixels) [%d, %d] -> [%d x %d]", anchorRect.x,
+      anchorRect.y, anchorRect.width, anchorRect.height);
   if (!WaylandPopupIsFirst()) {
     DesktopIntPoint parent = WaylandGetParentPosition();
     LOG("  subtract parent position from anchor [%d, %d]\n", parent.x.value,
@@ -3436,6 +3461,11 @@ auto nsWindow::Bounds::ComputeWayland(const nsWindow* aWindow) -> Bounds {
     gdk_window_get_position(aWin, &b.x, &b.y);
     b.width = gdk_window_get_width(aWin);
     b.height = gdk_window_get_height(aWin);
+    LOG_WIN(aWindow,
+            "  raw gdk %p pos (%d, %d) size (%d x %d) ceiled %d frac %.3f",
+            aWin, b.x, b.y, b.width, b.height,
+            const_cast<nsWindow*>(aWindow)->GdkCeiledScaleFactor(),
+            aWindow->FractionalScaleFactor());
     return DesktopIntRect(b.x, b.y, b.width, b.height);
   };
 
