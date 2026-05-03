@@ -743,6 +743,7 @@ void nsWindow::Destroy() {
   mContainer = nullptr;
 #ifdef MOZ_WAYLAND
   if (mSurface) {
+    LOG("  nsWindow::Destroy() releasing WaylandSurface[%p]", mSurface.get());
     mSurface->SetOwningWindow(nullptr);
   }
   mSurface = nullptr;
@@ -1309,7 +1310,10 @@ bool nsWindow::WaylandPopupRemoveNegativePosition(int* aX, int* aY) {
 }
 
 void nsWindow::ShowWaylandPopupWindow() {
-  LOG("nsWindow::ShowWaylandPopupWindow. Expected to see visible.");
+  LOG("nsWindow::ShowWaylandPopupWindow. Expected to see visible. ceiled %d "
+      "frac %.3f surfaceFracKnown=%d isMapped=%d",
+      GdkCeiledScaleFactor(), FractionalScaleFactor(),
+      int(SurfaceFractionalScaleIfKnown().isSome()), int(mIsMapped));
   MOZ_ASSERT(IsWaylandPopup());
 
   if (!mPopupTrackInHierarchy) {
@@ -5671,10 +5675,19 @@ void nsWindow::RefreshScale(bool aRefreshScreen, bool aForceRefresh) {
     return;
   }
 
-  LOG("nsWindow::RefreshScale() GdkWindow scale %d refresh %d",
-      gdk_window_get_scale_factor(mGdkWindow), aRefreshScreen);
-
   int ceiledScale = gdk_window_get_scale_factor(mGdkWindow);
+#ifdef MOZ_WAYLAND
+  auto surfaceScale = SurfaceFractionalScaleIfKnown();
+  LOG("nsWindow::RefreshScale() GdkWindow scale %d -> %d refresh=%d force=%d "
+      "windowType=%d isPopup=%d frac %.3f surfaceFrac=%.3f(known=%d) "
+      "isMapped=%d",
+      GdkCeiledScaleFactor(), ceiledScale, aRefreshScreen, aForceRefresh,
+      int(mWindowType), int(IsPopup()), FractionalScaleFactor(),
+      surfaceScale.valueOr(-1.0), int(surfaceScale.isSome()), int(mIsMapped));
+#else
+  LOG("nsWindow::RefreshScale() GdkWindow scale %d refresh %d", ceiledScale,
+      aRefreshScreen);
+#endif
   const bool scaleChanged =
       aForceRefresh || GdkCeiledScaleFactor() != ceiledScale;
 #ifdef MOZ_WAYLAND
@@ -6298,7 +6311,11 @@ nsresult nsWindow::Create(nsIWidget* aParent, const LayoutDeviceIntRect& aRect,
   } else if (mWindowType == WindowType::Popup) {
     mGtkWindowRoleName = "Popup";
 
-    LOG("  nsWindow::Create() Popup");
+    LOG("  nsWindow::Create() Popup parentnsWindow=%p (parent ceiled %d frac "
+        "%.3f)",
+        parentnsWindow, parentnsWindow ? parentnsWindow->GdkCeiledScaleFactor()
+                                       : -1,
+        parentnsWindow ? parentnsWindow->FractionalScaleFactor() : -1.0);
 
     if (mIsDragPopup) {
       gtk_window_set_type_hint(GTK_WINDOW(mShell), GDK_WINDOW_TYPE_HINT_DND);
@@ -6364,6 +6381,11 @@ nsresult nsWindow::Create(nsIWidget* aParent, const LayoutDeviceIntRect& aRect,
 #ifdef MOZ_WAYLAND
   if (GdkIsWaylandDisplay()) {
     mSurface = new WaylandSurface(
+        parentnsWindow ? MOZ_WL_SURFACE(parentnsWindow->GetMozContainer())
+                       : nullptr);
+    LOG("  nsWindow::Create() WaylandSurface[%p] created (parent surface "
+        "%p)",
+        mSurface.get(),
         parentnsWindow ? MOZ_WL_SURFACE(parentnsWindow->GetMozContainer())
                        : nullptr);
   }
@@ -9937,7 +9959,16 @@ nsWindow* nsWindow::GetWindow(GdkWindow* window) {
 // nsWindow::OnMap() / nsWindow::OnUnmap() is called from map/unmap mContainer
 // handlers directly as we paint to mContainer.
 void nsWindow::OnMap() {
+#ifdef MOZ_WAYLAND
+  GtkWindow* transientFor =
+      mShell ? gtk_window_get_transient_for(GTK_WINDOW(mShell)) : nullptr;
+  LOG("nsWindow::OnMap windowType=%d isPopup=%d transientFor=%p ceiled %d "
+      "frac %.3f surfaceFracKnown=%d",
+      int(mWindowType), int(IsPopup()), transientFor, GdkCeiledScaleFactor(),
+      FractionalScaleFactor(), SurfaceFractionalScaleIfKnown().isSome());
+#else
   LOG("nsWindow::OnMap");
+#endif
 
   MaybeCreatePipResources();
 
@@ -9983,7 +10014,14 @@ void nsWindow::OnMap() {
 }
 
 void nsWindow::OnUnmap() {
+#ifdef MOZ_WAYLAND
+  LOG("nsWindow::OnUnmap windowType=%d isPopup=%d ceiled %d frac %.3f "
+      "surfaceFracKnown=%d",
+      int(mWindowType), int(IsPopup()), GdkCeiledScaleFactor(),
+      FractionalScaleFactor(), SurfaceFractionalScaleIfKnown().isSome());
+#else
   LOG("nsWindow::OnUnmap");
+#endif
   ClearPipResources();
 
   {
