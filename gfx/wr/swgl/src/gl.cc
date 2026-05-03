@@ -58,9 +58,7 @@ WINBASEAPI BOOL WINAPI QueryPerformanceFrequency(LARGE_INTEGER* lpFrequency);
 }
 
 #else
-// GCC is slower when dealing with always_inline, especially in debug builds.
-// When using Clang, use always_inline more aggressively.
-#  if defined(__clang__) || defined(NDEBUG)
+#  if defined(__clang__) || defined (__GNUC__) || defined(NDEBUG)
 #    define ALWAYS_INLINE __attribute__((always_inline)) inline
 #  else
 #    define ALWAYS_INLINE inline
