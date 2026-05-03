@@ -7,6 +7,7 @@
 
 #include <signal.h>  // for SYS_SECCOMP
 #include <stdint.h>
+#include <signal.h>
 #include <sys/ioctl.h>
 
 #include "build/build_config.h"

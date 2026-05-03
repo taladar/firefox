@@ -66,7 +66,7 @@ typedef pthread_cond_t  cnd_t;
 typedef pthread_t       thrd_t;
 typedef pthread_key_t   tss_t;
 typedef pthread_mutex_t mtx_t;
-typedef pthread_once_t  once_flag;
+//typedef pthread_once_t  once_flag;
 
 
 /*
@@ -90,12 +90,13 @@ impl_thrd_routine(void *p)
 
 /*--------------- 7.25.2 Initialization functions ---------------*/
 // 7.25.2.1
-static inline void
+//
+/*static inline void
 call_once(once_flag *flag, void (*func)(void))
 {
     pthread_once(flag, func);
 }
-
+*/
 
 /*------------- 7.25.3 Condition variable functions -------------*/
 // 7.25.3.1
