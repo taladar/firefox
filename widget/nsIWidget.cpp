@@ -2113,8 +2113,56 @@ LayersId nsIWidget::GetRootLayerTreeId() {
 already_AddRefed<widget::Screen> nsIWidget::GetWidgetScreen() {
   ScreenManager& screenManager = ScreenManager::GetSingleton();
   LayoutDeviceIntRect bounds = GetScreenBounds();
-  DesktopIntRect deskBounds = RoundedToInt(bounds / GetDesktopToDeviceScale());
-  return screenManager.ScreenForRect(deskBounds);
+  const auto widgetScale = GetDesktopToDeviceScale();
+  DesktopIntRect deskBounds = RoundedToInt(bounds / widgetScale);
+  RefPtr<widget::Screen> screen = screenManager.ScreenForRect(deskBounds);
+
+  // On Wayland every monitor is reported with origin (0, 0) — see
+  // ScreenHelperGTK::MakeScreenGtk's `availRect.MoveTo(0, 0)`. ScreenForRect
+  // therefore can't disambiguate two monitors with the same DesktopPixel
+  // size and returns the first match, which on a mixed-scale multi-monitor
+  // setup is wrong for any window not on the primary monitor. Concretely:
+  // a content widget on a 1.5x 4K screen has its puppet scale forwarded
+  // from chrome (= 1.5), but ScreenForRect picks the 1.0x 1440p monitor
+  // (which has the same Desktop size 2560x1440) so screen.width returns
+  // (rect_from_1.0_screen) * (cssScale_from_1.5_widget)^-1 = 1707 instead
+  // of 2560. nsWindow on Wayland avoids this by going through
+  // ScreenHelperGTK::GetScreenForWindow first; the puppet widget falls
+  // through to here and has no comparable shortcut.
+  //
+  // If the screen we got back has a contentsScale that doesn't match this
+  // widget's, prefer one whose scale does match. When several screens
+  // match the scale and they all have the same rect size, any
+  // representative is equivalent for screen.width / availWidth / dpr (the
+  // common multi-of-the-same-monitor case). When sizes diverge the choice
+  // is genuinely ambiguous and we keep ScreenForRect's answer.
+  if (screen) {
+    auto scaleOf = [](const widget::Screen& aScreen) {
+      return aScreen.GetContentsScaleFactor().scale;
+    };
+    if (std::abs(scaleOf(*screen) - widgetScale.scale) >= 0.01) {
+      auto& screens = screenManager.CurrentScreenList();
+      RefPtr<widget::Screen> scaleMatch;
+      bool ambiguousSize = false;
+      for (const auto& s : screens) {
+        if (std::abs(scaleOf(*s) - widgetScale.scale) >= 0.01) {
+          continue;
+        }
+        if (s->GetRect().IsEmpty()) {
+          continue;  // Powered-off output, see GetScreenForWindow comment.
+        }
+        if (!scaleMatch) {
+          scaleMatch = s;
+        } else if (s->GetRect().Size() != scaleMatch->GetRect().Size()) {
+          ambiguousSize = true;
+        }
+      }
+      if (scaleMatch && !ambiguousSize) {
+        return scaleMatch.forget();
+      }
+    }
+  }
+  return screen.forget();
 }
 
 nsresult nsIWidget::SynthesizeNativeTouchTap(
