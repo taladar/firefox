@@ -4,6 +4,7 @@
 
 #include "mozilla/intl/TimeZone.h"
 
+#include "mozilla/Try.h"
 #include "mozilla/Vector.h"
 
 #include <algorithm>

@@ -11,6 +11,7 @@
 #include "nsIStringBundle.h"
 #include "nsReadableUtils.h"
 #include "nsContentUtils.h"
+#include "prenv.h"
 
 #ifdef MOZ_ENABLE_DBUS
 #  include <gio/gio.h>
