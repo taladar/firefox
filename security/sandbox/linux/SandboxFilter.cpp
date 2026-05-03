@@ -1925,11 +1925,19 @@ class GMPSandboxPolicy : public SandboxPolicyCommon {
       case __NR_sched_get_priority_max:
         return Allow();
       case __NR_sched_getparam:
-      case __NR_sched_getscheduler:
-      case __NR_sched_setscheduler: {
+#if defined(LIBC_GLIBC)
+      case __NR_sched_setscheduler:
+#endif
+      case __NR_sched_getscheduler: {
         Arg<pid_t> pid(0);
         return If(pid == 0, Allow()).Else(Trap(SchedTrap, nullptr));
       }
+
+#if !defined(LIBC_GLIBC)
+      // For pthread_create(3) on musl; bug 1657849.
+      case __NR_sched_setscheduler:
+        return Allow();
+#endif
 
       // For clock(3) on older glibcs; bug 1304220.
       case __NR_times:
@@ -2116,12 +2124,20 @@ class RDDSandboxPolicy final : public SandboxPolicyCommon {
       case __NR_sched_getparam:
       case __NR_sched_setparam:
       case __NR_sched_getscheduler:
+#if defined(LIBC_GLIBC)
       case __NR_sched_setscheduler:
+#endif
       case __NR_sched_getattr:
       case __NR_sched_setattr: {
         Arg<pid_t> pid(0);
         return If(pid == 0, Allow()).Else(Trap(SchedTrap, nullptr));
       }
+
+#if !defined(LIBC_GLIBC)
+      // For pthread_create(3) on musl; bug 1657849.
+      case __NR_sched_setscheduler:
+        return Allow();
+#endif
 
         // The priority bounds are also used, sometimes (bug 1838675):
       case __NR_sched_get_priority_min:
