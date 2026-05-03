@@ -1341,6 +1341,26 @@ def enable_cairo_ft(target, tree_freetype, freetype2_info):
 set_config("MOZ_ENABLE_CAIRO_FT", True, when=enable_cairo_ft)
 set_config("CAIRO_FT_CFLAGS", ft2_info.cflags, when=enable_cairo_ft)
 
+# Graphite2
+# ==============================================================
+option("--with-system-graphite2",
+       help="Use system graphite2 (located with pkgconfig)")
+
+system_graphite2 = pkg_check_modules("MOZ_GRAPHITE2", "graphite2",
+                                     when="--with-system-graphite2")
+
+set_config("MOZ_SYSTEM_GRAPHITE2", depends_if(system_graphite2)(lambda _: True))
+
+# HarfBuzz
+# ==============================================================
+option("--with-system-harfbuzz",
+       help="Use system harfbuzz (located with pkgconfig)")
+
+system_harfbuzz = pkg_check_modules("MOZ_HARFBUZZ", "harfbuzz >= 2.7.4",
+                                    when="--with-system-harfbuzz")
+
+set_config("MOZ_SYSTEM_HARFBUZZ", depends_if(system_harfbuzz)(lambda _: True))
+
 
 # WebDriver (HTTP / BiDi)
 # ==============================================================

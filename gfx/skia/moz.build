@@ -648,6 +648,9 @@ LOCAL_INCLUDES += [
     "/gfx/harfbuzz/src",
 ]
 
+if CONFIG['MOZ_SYSTEM_HARFBUZZ']:
+    CXXFLAGS += CONFIG['MOZ_HARFBUZZ_CFLAGS']
+
 if CONFIG['MOZ_WIDGET_TOOLKIT'] in ('gtk', 'android'):
     LOCAL_INCLUDES += [
         "/gfx/cairo/cairo/src",
