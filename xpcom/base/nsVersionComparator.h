@@ -8,6 +8,7 @@
 #ifndef nsVersionComparator_h_
 #define nsVersionComparator_h_
 
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
