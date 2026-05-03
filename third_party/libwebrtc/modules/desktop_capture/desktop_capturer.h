@@ -17,6 +17,7 @@
 #include <string>
 #include <type_traits>
 #include <vector>
+#include <sys/types.h>
 
 // TODO(alcooper): Update include usage in downstream consumers and then change
 // this to a forward declaration.
