@@ -94,12 +94,16 @@ set_config("PGO_PROFILE_PATH", pgo_profile_path)
 
 @depends(
     "--enable-profile-use",
+    c_compiler,
     pgo_profile_path,
     llvm_profdata,
     llvm_profdata_order,
     build_environment,
 )
-def orderfile_path(profile_use, path, profdata, profdata_order, build_env):
+def orderfile_path(profile_use, compiler, path, profdata, profdata_order, build_env):
+    if compiler.type == "gcc":
+        return None
+
     if not profile_use:
         return None
 
@@ -143,7 +147,7 @@ def pgo_flags(
         return namespace(
             gen_cflags=["-fprofile-generate"],
             gen_ldflags=["-fprofile-generate"],
-            use_cflags=["-fprofile-use", "-fprofile-correction", "-Wcoverage-mismatch"],
+            use_cflags=["-fprofile-use", "-fprofile-correction", "-Wno-coverage-mismatch"],
             use_ldflags=["-fprofile-use"],
         )
 

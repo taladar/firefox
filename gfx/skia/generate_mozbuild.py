@@ -50,8 +50,8 @@ if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'windows':
 if CONFIG['INTEL_ARCHITECTURE']:
     SOURCES['skia/modules/skcms/skcms.cc'].flags += ['-DSKCMS_DISABLE_SKX']
     skia_ssse3_flags = ['-Dskvx=skvx_ssse3', '-mssse3']
-    skia_avx_flags = ['-Dskvx=skvx_avx', '-mavx']
-    skia_hsw_flags = ['-Dskvx=skvx_hsw', '-mavx2', '-mf16c', '-mfma']
+    skia_avx_flags = ['-Dskvx=skvx_avx', '-mavx', '-fno-lto']
+    skia_hsw_flags = ['-Dskvx=skvx_hsw', '-mavx2', '-mf16c', '-mfma', '-fno-lto']
     SOURCES['skia/src/core/SkBitmapProcState_opts_ssse3.cpp'].flags += skia_ssse3_flags
     SOURCES['skia/src/core/SkBlitMask_opts_ssse3.cpp'].flags += skia_ssse3_flags
     SOURCES['skia/src/core/SkSwizzler_opts_ssse3.cpp'].flags += ['-Dskvx=skvx_ssse3']

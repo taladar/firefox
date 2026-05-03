@@ -130,11 +130,11 @@ if CONFIG["INTEL_ARCHITECTURE"]:
     DEFINES["USE_SSE2"] = True
     # The file uses SSE2 intrinsics, so it needs special compile flags on some
     # compilers.
-    SOURCES["ConvolutionFilterAVX2.cpp"].flags += ["-mavx2"]
+    SOURCES["ConvolutionFilterAVX2.cpp"].flags += ["-mavx2", "-fno-lto"]
     SOURCES["ConvolutionFilterSSE2.cpp"].flags += CONFIG["SSE2_FLAGS"]
     SOURCES["FilterProcessingSSE2.cpp"].flags += CONFIG["SSE2_FLAGS"]
     SOURCES["ImageScalingSSE2.cpp"].flags += CONFIG["SSE2_FLAGS"]
-    SOURCES["SwizzleAVX2.cpp"].flags += ["-mavx2"]
+    SOURCES["SwizzleAVX2.cpp"].flags += ["-mavx2", "-fno-lto"]
     SOURCES["SwizzleSSE2.cpp"].flags += CONFIG["SSE2_FLAGS"]
     SOURCES["SwizzleSSSE3.cpp"].flags += CONFIG["SSSE3_FLAGS"]
 
