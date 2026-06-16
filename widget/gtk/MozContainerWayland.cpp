@@ -208,6 +208,7 @@ static bool moz_container_wayland_ensure_surface(MozContainer* container,
 
   nsWindow* window = moz_container_get_nsWindow(container);
   MOZ_RELEASE_ASSERT(window);
+  surface->SetOwningWindow(window);
 
   GtkWindow* parent =
       gtk_window_get_transient_for(GTK_WINDOW(window->GetGtkWidget()));
