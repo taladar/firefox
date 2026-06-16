@@ -261,6 +261,11 @@ class nsWaylandDisplay {
   bool mIsPrimarySelectionEnabled = false;
 
   AutoTArray<UniquePtr<MonitorConfig>, 4> mMonitors;
+
+  // GLib timer source ID for the deferred ScreenHelperGTK::RequestRefreshScreens
+  // call from RefreshScreens(). 0 = no pending timer. See the long comment in
+  // RefreshScreens() in nsWaylandDisplay.cpp for why the call is deferred.
+  guint mScreenRefreshTimer = 0;
 };
 
 wl_display* WaylandDisplayGetWLDisplay();

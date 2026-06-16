@@ -451,6 +451,12 @@ class nsWindow : public nsIWidget {
   // HiDPI scale conversion
   gint GdkCeiledScaleFactor();
   double FractionalScaleFactor() const;
+  // Returns the surface's per-output fractional scale if the compositor has
+  // already delivered a wp_fractional_scale_v1.preferred_scale event for it,
+  // or Nothing() otherwise. Unlike FractionalScaleFactor() this never falls
+  // back through ScreenHelperGTK::GetScreenForWindow(), which makes it safe
+  // to call from there without recursing.
+  mozilla::Maybe<double> SurfaceFractionalScaleIfKnown() const;
 
   LayoutDeviceIntPoint ToLayoutDevicePixels(const DesktopIntPoint&);
   LayoutDeviceIntSize ToLayoutDevicePixels(const DesktopIntSize&);
@@ -467,6 +473,14 @@ class nsWindow : public nsIWidget {
   GdkPoint DevicePixelsToGdkPointRoundDown(const LayoutDeviceIntPoint&);
   GdkRectangle DevicePixelsToGdkRectRoundOut(const LayoutDeviceIntRect&);
   GdkRectangle DevicePixelsToGdkRectRoundIn(const LayoutDeviceIntRect&);
+
+  // DesktopPixels are physical / FractionalScaleFactor(); Gdk-logical units
+  // are physical / GdkCeiledScaleFactor(). These helpers convert between the
+  // two for code paths feeding gtk_window_resize/move and gdk_window_move_to_*
+  // (which all expect Gdk-logical units). When the two scales agree (X11,
+  // integer scale, fractional pref disabled) the conversion is identity.
+  gint DesktopPixelsToGdkCoordRound(int);
+  GdkRectangle DesktopPixelsToGdkRectRound(const DesktopIntRect&);
 
   // From GDK
   LayoutDeviceIntPoint GdkPointToDevicePixels(const GdkPoint&);
@@ -644,7 +658,8 @@ class nsWindow : public nsIWidget {
   // positioning, in LockAspect() to remember the intended aspect ratio, and
   // to remember a size requested while waiting for moved-to-rect when
   // OnSizeAllocate() might change mClientArea.Size().
-  // All these values are in unscaled (Gdk) coordinates.
+  // Values are in DesktopPixels (physical pixels divided by the fractional
+  // scale factor on Wayland; equal to ceiled-scale pixels on X11).
   DesktopIntSize mLastSizeRequest;
   // Same but for positioning. Used to track move requests.
   DesktopIntPoint mLastMoveRequest;

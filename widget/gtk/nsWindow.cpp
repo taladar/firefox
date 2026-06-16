@@ -635,6 +635,9 @@ void nsWindow::Destroy() {
   mShell = nullptr;
   mContainer = nullptr;
 #ifdef MOZ_WAYLAND
+  if (mSurface) {
+    mSurface->SetOwningWindow(nullptr);
+  }
   mSurface = nullptr;
 #endif
 
@@ -1617,6 +1620,14 @@ auto nsWindow::Bounds::ComputeX11(const nsWindow* aWindow) -> Bounds {
 #ifdef MOZ_WAYLAND
 auto nsWindow::Bounds::ComputeWayland(const nsWindow* aWindow) -> Bounds {
   LOG_WIN(aWindow, "Bounds::ComputeWayland()");
+  // Empirically on niri with wp_fractional_scale_v1, gdk_window_get_position/
+  // width/height return values in compositor-logical units, which equals
+  // Mozilla DesktopPixels (physical / fractional). The earlier assumption
+  // that they came in Gdk-logical (physical / ceiled) was wrong on this
+  // setup: scaling by ceiled/fractional inflated mClientArea by 4/3 and the
+  // system settled into a self-consistent bad state where the surface was
+  // sized correctly but layout thought the window was 4/3 wider than it
+  // actually was.
   auto GetBounds = [&](GdkWindow* aWin) {
     GdkRectangle b{0};
     gdk_window_get_position(aWin, &b.x, &b.y);
@@ -2654,18 +2665,22 @@ void nsWindow::EmulateResizeDrag(GdkEventMotion* aEvent) {
   auto oldPoint = mLastResizePoint;
   mLastResizePoint = newPoint;
 
-  auto size = GetScreenBoundsUnscaled().Size();
-  size.width += newPoint.x - oldPoint.x;
-  size.height += newPoint.y - oldPoint.y;
+  // Work in Gdk-logical units throughout: event coordinates are Gdk-logical,
+  // and gtk_window_resize() expects Gdk-logical units.
+  auto desktopSize = GetScreenBoundsUnscaled().Size();
+  gint width = DesktopPixelsToGdkCoordRound(desktopSize.width) +
+               (newPoint.x - oldPoint.x);
+  gint height = DesktopPixelsToGdkCoordRound(desktopSize.height) +
+                (newPoint.y - oldPoint.y);
 
   if (mAspectResizer.value() == GTK_ORIENTATION_VERTICAL) {
-    size.width = int(size.height * mAspectRatio);
+    width = int(height * mAspectRatio);
   } else {  // GTK_ORIENTATION_HORIZONTAL
-    size.height = int(size.width / mAspectRatio);
+    height = int(width / mAspectRatio);
   }
-  LOG("  aspect ratio correction %d x %d aspect %.2f\n", size.width,
-      size.height, mAspectRatio);
-  gtk_window_resize(GTK_WINDOW(mShell), size.width, size.height);
+  LOG("  aspect ratio correction %d x %d aspect %.2f\n", width, height,
+      mAspectRatio);
+  gtk_window_resize(GTK_WINDOW(mShell), width, height);
 }
 
 void nsWindow::OnMotionNotifyEvent(GdkEventMotion* aEvent) {
@@ -4328,8 +4343,9 @@ nsresult nsWindow::Create(nsIWidget* aParent, const LayoutDeviceIntRect& aRect,
   if (AreBoundsSane()) {
     LOG("  nsWindow::Create() Initial resize to %d x %d\n", mClientArea.width,
         mClientArea.height);
-    gtk_window_resize(GTK_WINDOW(mShell), mClientArea.width,
-                      mClientArea.height);
+    gtk_window_resize(GTK_WINDOW(mShell),
+                      DesktopPixelsToGdkCoordRound(mClientArea.width),
+                      DesktopPixelsToGdkCoordRound(mClientArea.height));
   }
   if (mPiPType == PiPType::MediaPiP) {
     LOG("  Is Media PiP window\n");
@@ -4760,6 +4776,9 @@ void nsWindow::NativeMoveResize(bool aMoved, bool aResized) {
 
   // Window size is calculated without decorations, Gtk adds decorations
   // size to our request at gtk_window_resize().
+  // gtk_window_move/resize consume Gdk-logical units (physical / ceiled
+  // scale), while frameRect is in DesktopPixels (physical / fractional
+  // scale). Convert at the boundary.
   GdkRectangle moveResizeRect = [&] {
     auto cr = frameRect;
     // In CSD mode gtk_window_move() / gtk_window_resize() expects coordinates
@@ -4771,7 +4790,7 @@ void nsWindow::NativeMoveResize(bool aMoved, bool aResized) {
     if (!ToplevelUsesCSD()) {
       cr -= DesktopIntPoint(mClientMargin.left, mClientMargin.top);
     }
-    return GdkRectangle{cr.x, cr.y, cr.width, cr.height};
+    return DesktopPixelsToGdkRectRound(cr);
   }();
 
   LOG("nsWindow::NativeMoveResize mLastMoveRequest [%d,%d] mClientMargin "
@@ -5103,6 +5122,10 @@ bool nsWindow::DoDrawTilebarCorners() {
 }
 
 GdkWindow* nsWindow::GetToplevelGdkWindow() const {
+  if (!mShell || !GTK_IS_WIDGET(mShell)) {
+    LOGVERBOSE("GetToplevelGdkWindow: invalid mShell %p", mShell);
+    return nullptr;
+  }
   return gtk_widget_get_window(mShell);
 }
 
@@ -6768,8 +6791,9 @@ void nsWindow::SetCustomTitlebar(bool aState) {
 #pragma GCC diagnostic pop
 
     if (AreBoundsSane()) {
-      gtk_window_resize(GTK_WINDOW(mShell), mClientArea.width,
-                        mClientArea.height);
+      gtk_window_resize(GTK_WINDOW(mShell),
+                        DesktopPixelsToGdkCoordRound(mClientArea.width),
+                        DesktopPixelsToGdkCoordRound(mClientArea.height));
     }
 
     ConfigureToplevelWindow();
@@ -6810,9 +6834,11 @@ gint nsWindow::GdkCeiledScaleFactor() {
 
   // We're missing scale for window (is hidden?), read parent scale
   if (nsWindow* topmost = nsWindow::FromWidget(GetTopLevelWidget())) {
-    LOGVERBOSE("nsWindow::GdkCeiledScaleFactor(): toplevel [%p] scale %d",
-               topmost, (int)topmost->mCeiledScaleFactor);
-    return topmost->mCeiledScaleFactor;
+    if (topmost->mCeiledScaleFactor != sNoScale) {
+      LOGVERBOSE("nsWindow::GdkCeiledScaleFactor(): toplevel [%p] scale %d",
+                 topmost, (int)topmost->mCeiledScaleFactor);
+      return topmost->mCeiledScaleFactor;
+    }
   }
 
   LOGVERBOSE("nsWindow::GdkCeiledScaleFactor(): monitor scale %d",
@@ -6820,25 +6846,71 @@ gint nsWindow::GdkCeiledScaleFactor() {
   return ScreenHelperGTK::GetGTKMonitorScaleFactor();
 }
 
-double nsWindow::FractionalScaleFactor() const {
+mozilla::Maybe<double> nsWindow::SurfaceFractionalScaleIfKnown() const {
 #ifdef MOZ_WAYLAND
   if (mSurface) {
-    auto scale = mSurface->GetScale();
+    // Use GetPreferredScaleOrNoScale() rather than GetScale(): the latter
+    // falls back through ScreenHelperGTK::GetScreenForWindow() when no
+    // preferred-scale event has arrived, which would re-enter us if this
+    // helper is being called from GetScreenForWindow itself.
+    double scale = mSurface->GetPreferredScaleOrNoScale();
     if (scale != sNoScale) {
-#  ifdef MOZ_LOGGING
-      if (LOG_ENABLED_VERBOSE()) {
-        static float lastScaleLog = 0.0;
-        if (lastScaleLog != scale) {
-          lastScaleLog = scale;
-          LOGVERBOSE("nsWindow::FractionalScaleFactor(): fractional scale %.2f",
-                     scale);
-        }
-      }
-#  endif
-      return scale;
+      return mozilla::Some(scale);
     }
   }
 #endif
+  return mozilla::Nothing();
+}
+
+double nsWindow::FractionalScaleFactor() const {
+#ifdef MOZ_WAYLAND
+  if (auto scale = SurfaceFractionalScaleIfKnown()) {
+#  ifdef MOZ_LOGGING
+    if (LOG_ENABLED_VERBOSE()) {
+      static float lastScaleLog = 0.0;
+      if (lastScaleLog != *scale) {
+        lastScaleLog = *scale;
+        LOGVERBOSE("nsWindow::FractionalScaleFactor(): fractional scale %.2f",
+                   *scale);
+      }
+    }
+#  endif
+    return *scale;
+  }
+  // Popup windows have their own GdkWindow; before they're mapped and the
+  // wp_fractional_scale_v1 preferred_scale event has arrived, neither
+  // SurfaceFractionalScaleIfKnown nor gdk_display_get_monitor_at_window can
+  // tell us the right scale. Trusting GDK in that gap returns whichever
+  // monitor it defaults to (often a 1.0 monitor), causing ToDesktopPixels in
+  // WaylandPopupCheckAndGetAnchor to be a no-op and the anchor to land at
+  // physical-pixel coordinates that the compositor reads as compositor-
+  // logical, producing a fractional-factor offset.
+  //
+  // Defer to the transient-for parent's scale instead. The parent is either
+  // a toplevel (whose own surface scale is known after first map) or another
+  // popup whose chain eventually resolves at a toplevel. This mirrors what
+  // GdkCeiledScaleFactor() already does (it walks up via
+  // GetToplevelGdkWindow), keeping fractional and ceiled in sync.
+  if (GdkIsWaylandDisplay() && mShell) {
+    GtkWindow* parentGtkWindow =
+        gtk_window_get_transient_for(GTK_WINDOW(mShell));
+    if (parentGtkWindow && GTK_IS_WIDGET(parentGtkWindow) &&
+        GTK_WIDGET(parentGtkWindow) != mShell) {
+      if (nsWindow* parent =
+              nsWindow::FromGtkWidget(GTK_WIDGET(parentGtkWindow))) {
+        if (parent != this) {
+          return parent->FractionalScaleFactor();
+        }
+      }
+    }
+  }
+#endif
+  // Look up the actual monitor this window is on rather than defaulting to
+  // monitor 0, which is wrong when monitors have mixed scale factors.
+  if (RefPtr<Screen> screen =
+          ScreenHelperGTK::GetScreenForWindow(const_cast<nsWindow*>(this))) {
+    return screen->GetContentsScaleFactor();
+  }
   return ScreenHelperGTK::GetGTKMonitorFractionalScaleFactor();
 }
 
@@ -6878,16 +6950,43 @@ GdkRectangle nsWindow::DevicePixelsToGdkRectRoundIn(
   return {x, y, std::max(right - x, 0), std::max(bottom - y, 0)};
 }
 
+gint nsWindow::DesktopPixelsToGdkCoordRound(int aPixels) {
+  // Identity: on Wayland with wp_fractional_scale_v1, gtk_window_resize/
+  // gtk_window_move/gdk_window_move_to_rect all consume compositor-logical
+  // units = DesktopPixels here. The wrapper is kept (rather than removed at
+  // call sites) so the change is small and easy to revert.
+  return aPixels;
+}
+
+GdkRectangle nsWindow::DesktopPixelsToGdkRectRound(
+    const DesktopIntRect& aRect) {
+  return {aRect.x, aRect.y, aRect.width, aRect.height};
+}
+
 LayoutDeviceIntPoint nsWindow::GdkEventCoordsToDevicePixels(gdouble aX,
                                                             gdouble aY) {
   double scale = FractionalScaleFactor();
-  return LayoutDeviceIntPoint::Floor((float)(aX * scale), (float)(aY * scale));
+  auto result =
+      LayoutDeviceIntPoint::Floor((float)(aX * scale), (float)(aY * scale));
+  LOGVERBOSE(
+      "GdkEventCoordsToDevicePixels: in (%g, %g) frac %.3f ceiled %d -> dev "
+      "(%d, %d), mClientArea (%d, %d) %d x %d",
+      aX, aY, scale, GdkCeiledScaleFactor(), result.x.value, result.y.value,
+      mClientArea.x, mClientArea.y, mClientArea.width, mClientArea.height);
+  return result;
 }
 
 LayoutDeviceIntPoint nsWindow::GdkPointToDevicePixels(const GdkPoint& aPoint) {
   double scale = FractionalScaleFactor();
-  return LayoutDeviceIntPoint::Floor((float)(aPoint.x * scale),
-                                     (float)(aPoint.y * scale));
+  auto result = LayoutDeviceIntPoint::Floor((float)(aPoint.x * scale),
+                                            (float)(aPoint.y * scale));
+  LOGVERBOSE(
+      "GdkPointToDevicePixels: in (%d, %d) frac %.3f ceiled %d -> dev "
+      "(%d, %d), mClientArea (%d, %d) %d x %d",
+      aPoint.x, aPoint.y, scale, GdkCeiledScaleFactor(), result.x.value,
+      result.y.value, mClientArea.x, mClientArea.y, mClientArea.width,
+      mClientArea.height);
+  return result;
 }
 
 nsresult nsWindow::SynthesizeNativeMouseEvent(

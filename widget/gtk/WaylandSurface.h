@@ -19,6 +19,7 @@ struct wl_subsurface;
 struct wl_egl_window;
 
 class MessageLoop;
+class nsWindow;
 
 namespace mozilla::widget {
 
@@ -43,6 +44,12 @@ class WaylandSurface final {
   void* GetLoggingWidget() const { return mLoggingWidget; };
   void SetLoggingWidget(void* aWidget) { mLoggingWidget = aWidget; }
 #endif
+
+  // Owning nsWindow back-reference, used by GetScale() to find the actual
+  // monitor this surface is on. Cleared by nsWindow::DestroyChildWindows()
+  // before the surface is released so the pointer never dangles.
+  void SetOwningWindow(nsWindow* aWindow) { mOwningWindow = aWindow; }
+  nsWindow* GetOwningWindow() const { return mOwningWindow; }
 
   // Fire VSync handler registered to this surface.
   void VSyncCallbackHandler(struct wl_callback* aCallback, uint32_t aTime,
@@ -289,6 +296,11 @@ class WaylandSurface final {
   bool HasCoordinatesScaleLocked(const WaylandSurfaceLock& aProofOfLock) const {
     return !!mCoordinatesScaleManager;
   }
+  // Returns the raw value of mScreenScale (sNoScale if no
+  // wp_fractional_scale_v1.preferred_scale event has been received yet).
+  // Unlike GetScale(), this never falls back through
+  // ScreenHelperGTK::GetScreenForWindow(), so it's safe to call from there.
+  double GetPreferredScaleOrNoScale() const { return mScreenScale; }
 
   // Called when screen ceiled scale changes or sets initial scale before we map
   // and paint the surface.
@@ -408,6 +420,11 @@ class WaylandSurface final {
   // Weak ref to owning widget (nsWindow or NativeLayerWayland),
   // used for diagnostics/logging only.
   void* mLoggingWidget = nullptr;
+
+  // Weak ref to the owning nsWindow, when this surface belongs to one.
+  // Cleared on nsWindow teardown. Used by GetScale() to find the current
+  // monitor when no fractional-scale event has arrived yet.
+  nsWindow* mOwningWindow = nullptr;
 
   // mIsMapped means we're supposed to be visible
   // (or not if Wayland compositor decides so).

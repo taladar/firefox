@@ -1472,6 +1472,15 @@ double WaylandSurface::GetScale() const {
     return scale;
   }
 
+  // Look up the actual monitor this surface is on rather than defaulting to
+  // monitor 0, which is wrong when monitors have mixed scale factors.
+  if (mOwningWindow) {
+    if (RefPtr<Screen> screen =
+            ScreenHelperGTK::GetScreenForWindow(mOwningWindow)) {
+      return screen->GetContentsScaleFactor();
+    }
+  }
+
   LOGVERBOSE("WaylandSurface::GetScale() fall back to monitor scale!");
   return ScreenHelperGTK::GetGTKMonitorFractionalScaleFactor();
 }
