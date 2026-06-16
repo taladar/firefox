@@ -609,30 +609,123 @@ RefPtr<Screen> ScreenHelperGTK::GetScreenForWindow(nsWindow* aWindow) {
 
   GdkDisplay* display = gdk_display_get_default();
   GdkMonitor* monitor = s_gdk_display_get_monitor_at_window(display, gdkWindow);
-  if (!monitor) {
-    LOG_SCREEN("  failed, can't get monitor for GdkWindow");
-    return nullptr;
-  }
 
-  int index = -1;
-  while (GdkMonitor* m = GdkDisplayGetMonitor(display, ++index)) {
-    if (m == monitor) {
-      RefPtr<Screen> screen =
-          ScreenManager::GetSingleton().CurrentScreenList().SafeElementAt(
-              index);
-      if (!screen) {
-        LOG_SCREEN(
-            "GetScreenForWindow() [%p] [%d] found monitor %p but no screen",
-            aWindow, index, monitor);
-        return nullptr;
+  RefPtr<Screen> gdkScreen;
+  int gdkIndex = -1;
+  if (monitor) {
+    int index = -1;
+    while (GdkMonitor* m = GdkDisplayGetMonitor(display, ++index)) {
+      if (m == monitor) {
+        gdkScreen =
+            ScreenManager::GetSingleton().CurrentScreenList().SafeElementAt(
+                index);
+        gdkIndex = index;
+        break;
       }
-      LOG_SCREEN("GetScreenForWindow() [%p] [%d] screen %s", aWindow, index,
-                 ToString(screen->GetRect()).c_str());
-      return screen.forget();
     }
   }
 
-  LOG_SCREEN("  Couldn't find monitor %p", monitor);
+#ifdef MOZ_WAYLAND
+  // On Wayland with mixed-scale outputs, gdk_display_get_monitor_at_window
+  // is unreliable: it often returns monitor 0 for windows that haven't been
+  // mapped yet or whose surface tracking lags behind. Mozilla's per-surface
+  // fractional scale (via wp_fractional_scale_v1, exposed by
+  // SurfaceFractionalScaleIfKnown() — which deliberately doesn't fall back
+  // through us) is the authoritative scale for the window. If the
+  // GDK-suggested screen's contents scale disagrees with the window's and
+  // exactly one screen has the matching scale, prefer that one. We can only
+  // do this once the surface has actually received a preferred-scale event;
+  // before that, we accept GDK's answer rather than guess.
+  Maybe<double> surfaceScale;
+  if (GdkIsWaylandDisplay()) {
+    surfaceScale = aWindow->SurfaceFractionalScaleIfKnown();
+  }
+  // A screen with a zero-sized rect is a transient state niri (and other
+  // wlroots-based compositors) report when an output has been powered off:
+  // the slot stays in the monitor list with size 0x0 and scale 1.0 until the
+  // output comes back. Returning that screen lets nsMenuPopupFrame's
+  // "Wayland constraint <to screen>" code clamp popups to 0x0; the bad size
+  // then leaks into mMoveToRectPopupSize and stays cached even after the
+  // screen is restored, so every subsequent popup on the affected toplevel
+  // collapses to 1x1 and disappears. Treat such screens as non-existent for
+  // window-screen lookup purposes.
+  auto isUsableScreen = [](const Screen& aScreen) {
+    return !aScreen.GetRect().IsEmpty();
+  };
+  if (gdkScreen && !isUsableScreen(*gdkScreen)) {
+    LOG_SCREEN(
+        "GetScreenForWindow() [%p] gdk-suggested screen [%d] has empty rect "
+        "%s; ignoring it",
+        aWindow, gdkIndex, ToString(gdkScreen->GetRect()).c_str());
+    gdkScreen = nullptr;
+    gdkIndex = -1;
+  }
+
+  if (surfaceScale) {
+    const double windowScale = *surfaceScale;
+    auto scaleMatches = [windowScale, &isUsableScreen](const Screen& aScreen) {
+      if (!isUsableScreen(aScreen)) {
+        return false;
+      }
+      // ScaleFactor's underlying float promotes to double in the subtraction.
+      return std::abs(aScreen.GetContentsScaleFactor().scale - windowScale) <
+             0.01;
+    };
+    if (gdkScreen && scaleMatches(*gdkScreen)) {
+      LOG_SCREEN(
+          "GetScreenForWindow() [%p] [%d] gdk screen %s (scale %.3f matches "
+          "window)",
+          aWindow, gdkIndex, ToString(gdkScreen->GetRect()).c_str(),
+          windowScale);
+      return gdkScreen.forget();
+    }
+    // Collect every screen matching the window's scale. If they all have
+    // the same rect size, they're equivalent for the values nsScreen
+    // exposes (screen.width / screen.availWidth / dpr) and for the popup
+    // constraint rect, so any representative will do — common in mirrored
+    // setups or two-of-the-same-monitor configurations. If sizes diverge,
+    // the choice is genuinely ambiguous and we defer to GDK.
+    auto& screens = ScreenManager::GetSingleton().CurrentScreenList();
+    RefPtr<Screen> scaleMatch;
+    bool ambiguousSize = false;
+    int matchCount = 0;
+    for (const auto& s : screens) {
+      if (!scaleMatches(*s)) {
+        continue;
+      }
+      ++matchCount;
+      if (!scaleMatch) {
+        scaleMatch = s;
+      } else if (s->GetRect().Size() != scaleMatch->GetRect().Size()) {
+        ambiguousSize = true;
+      }
+    }
+    if (scaleMatch && !ambiguousSize) {
+      LOG_SCREEN(
+          "GetScreenForWindow() [%p] scale-matched screen %s (window scale "
+          "%.3f; %d match%s; gdk suggested %s)",
+          aWindow, ToString(scaleMatch->GetRect()).c_str(), windowScale,
+          matchCount, matchCount == 1 ? "" : "es",
+          gdkScreen ? ToString(gdkScreen->GetRect()).c_str() : "nothing");
+      return scaleMatch.forget();
+    }
+    LOG_SCREEN(
+        "GetScreenForWindow() [%p] %d screens match scale %.3f with "
+        "differing sizes, deferring to gdk",
+        aWindow, matchCount, windowScale);
+  }
+#endif
+
+  if (gdkScreen) {
+    LOG_SCREEN("GetScreenForWindow() [%p] [%d] gdk screen %s", aWindow,
+               gdkIndex, ToString(gdkScreen->GetRect()).c_str());
+    return gdkScreen.forget();
+  }
+
+  LOG_SCREEN(
+      "GetScreenForWindow() [%p] no usable screen for monitor %p; "
+      "returning nullptr so caller falls back",
+      aWindow, monitor);
   return nullptr;
 }
 
