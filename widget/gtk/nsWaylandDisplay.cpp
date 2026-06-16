@@ -773,7 +773,43 @@ void nsWaylandDisplay::RefreshScreens() {
       return;
     }
   }
-  ScreenHelperGTK::RequestRefreshScreens();
+
+  // Defer the actual ScreenHelperGTK::RequestRefreshScreens call.
+  //
+  // nsWaylandDisplay binds wl_output on its own libwayland-client connection,
+  // separate from GTK's connection. niri (and presumably other compositors)
+  // delivers wl_output events to each connection independently — they're not
+  // ordered. After a monitor is re-created (e.g. on wake from screen-off),
+  // nsWaylandDisplay's wl_output may receive its full state events
+  // (geometry, mode, scale, done) significantly before GTK's wl_output does.
+  // Calling ScreenHelperGTK::RequestRefreshScreens() synchronously here
+  // (from this nsWaylandDisplay-channel done callback) would query GTK's
+  // monitor list while it still has the just-created GdkMonitor at default
+  // 0x0 geometry — and the resulting Mozilla Screen object then sticks at
+  // 0x0 / scale 1.0 until something else triggers another refresh, which
+  // typically nothing does.
+  //
+  // Defer via a short g_timeout so Mozilla's main loop has time to dispatch
+  // events on GTK's connection (which calls apply_monitor_change and
+  // populates GdkMonitor::geometry) before we read it. The captured race
+  // showed GTK's done arriving ~1.1 ms after nsWaylandDisplay's done — the
+  // two libwayland-client connections have separate event streams, but they
+  // ultimately share the kernel scheduler, so the inter-connection skew is
+  // tiny. 30 ms is ~30x that observed gap, leaves enough headroom for
+  // bursts on a loaded system, and keeps the user-perceived latency of a
+  // post-wake screen.width update well under perception threshold.
+  if (mScreenRefreshTimer != 0) {
+    return;  // Already scheduled.
+  }
+  mScreenRefreshTimer = g_timeout_add(
+      30,
+      [](gpointer aData) -> gboolean {
+        auto* self = static_cast<nsWaylandDisplay*>(aData);
+        self->mScreenRefreshTimer = 0;
+        ScreenHelperGTK::RequestRefreshScreens();
+        return G_SOURCE_REMOVE;
+      },
+      this);
 }
 
 static void global_registry_handler(void* data, wl_registry* registry,
@@ -941,6 +977,10 @@ static const struct wl_registry_listener registry_listener = {
     global_registry_handler, global_registry_remover};
 
 nsWaylandDisplay::~nsWaylandDisplay() {
+  if (mScreenRefreshTimer != 0) {
+    g_source_remove(mScreenRefreshTimer);
+    mScreenRefreshTimer = 0;
+  }
   g_list_free_full(mAsyncRoundtrips, (GDestroyNotify)wl_callback_destroy);
   MozClearPointer(mColorManager, wp_color_manager_v1_destroy);
   MozClearPointer(mColorRepresentationManager,
