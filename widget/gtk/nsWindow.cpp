@@ -6907,7 +6907,7 @@ double nsWindow::FractionalScaleFactor() const {
 #endif
   // Look up the actual monitor this window is on rather than defaulting to
   // monitor 0, which is wrong when monitors have mixed scale factors.
-  if (RefPtr<Screen> screen =
+  if (RefPtr<mozilla::widget::Screen> screen =
           ScreenHelperGTK::GetScreenForWindow(const_cast<nsWindow*>(this))) {
     return screen->GetContentsScaleFactor();
   }
